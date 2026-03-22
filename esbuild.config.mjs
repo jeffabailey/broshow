@@ -28,6 +28,7 @@ await esbuild.build({
 // Copy static assets from src/ to dist/
 cpSync(resolve(srcDir, 'manifest.json'), resolve(distDir, 'manifest.json'));
 cpSync(resolve(srcDir, 'popup.html'), resolve(distDir, 'popup.html'));
+cpSync(resolve(srcDir, 'popup.css'), resolve(distDir, 'popup.css'));
 cpSync(resolve(srcDir, 'offscreen.html'), resolve(distDir, 'offscreen.html'));
 
 console.log('Build complete: dist/');

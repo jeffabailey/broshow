@@ -4,10 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BroRecord</title>
+  <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <h1>BroRecord</h1>
-  <button id="start-recording">Start Recording</button>
+  <div class="popup-container">
+    <h1>BroRecord</h1>
+    <p id="status" class="status-text">Loading...</p>
+    <button id="action-button" disabled>Loading...</button>
+  </div>
   <script type="module" src="popup.js"></script>
 </body>
 </html>
