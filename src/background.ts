@@ -18,24 +18,35 @@ const chromeAPIs: ChromeAPIs = {
     return tab?.id != null ? { id: tab.id } : null;
   },
 
-  getMediaStreamId: (tabId: number) =>
-    chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }),
-
   createOffscreenDocument: () =>
     chrome.offscreen.createDocument({
       url: 'offscreen.html',
-      reasons: [chrome.offscreen.Reason.USER_MEDIA],
-      justification: 'Recording tab audio and video',
+      reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.DISPLAY_MEDIA, chrome.offscreen.Reason.BLOBS],
+      justification: 'Recording tab audio/video and converting blob to data URL',
     }),
 
-  closeOffscreenDocument: () => chrome.offscreen.closeDocument(),
+  closeOffscreenDocument: async () => {
+    try {
+      await chrome.offscreen.closeDocument();
+    } catch {
+      // Document may have been auto-closed by Chrome already
+    }
+  },
 
   sendMessageToOffscreen: (message: SWToOffscreen) =>
     chrome.runtime.sendMessage(message),
 
   downloadFile: async (url: string, filename: string) => {
+    console.log('[sw] downloadFile called:', url.slice(0, 80), filename);
     await chrome.downloads.download({ url, filename });
   },
+
+  getRecordingData: async () => {
+    const result = await chrome.storage.local.get('recordingData');
+    return (result.recordingData as string) ?? null;
+  },
+
+  clearRecordingData: () => chrome.storage.local.remove('recordingData'),
 
   now: () => Date.now(),
 };
@@ -46,12 +57,16 @@ const handleMessage = createMessageHandler(chromeAPIs);
 
 chrome.runtime.onMessage.addListener(
   (message: Message, _sender, sendResponse) => {
+    console.log('[sw] Received message:', JSON.stringify(message));
     handleMessage(message)
-      .then(sendResponse)
+      .then((response) => {
+        console.log('[sw] Handled message:', message.type, '-> response:', response?.type);
+        sendResponse(response);
+      })
       .catch((error: unknown) => {
         const errorMessage =
           error instanceof Error ? error.message : 'Unknown error';
-        console.error('BroRecord service worker error:', errorMessage);
+        console.error('[sw] Error handling message:', message.type, errorMessage);
         sendResponse({ type: 'error', message: errorMessage });
       });
 

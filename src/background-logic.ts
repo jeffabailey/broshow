@@ -9,7 +9,6 @@
 
 import type {
   RecordingState,
-  PopupToSW,
   SWToPopup,
   SWToOffscreen,
   OffscreenToSW,
@@ -32,24 +31,23 @@ export type StopResult = {
 
 export type OffscreenResultOutcome = {
   readonly newState: RecordingState;
-  readonly download: { readonly url: string; readonly filename: string } | null;
 };
 
 export type OffscreenErrorOutcome = {
   readonly newState: RecordingState;
   readonly response: SWToPopup;
-  readonly download: { readonly url: string; readonly filename: string } | null;
 };
 
 // --- Port types for chrome API dependencies --------------------------------
 
 export type ChromeAPIs = {
   readonly getActiveTab: () => Promise<{ id: number } | null>;
-  readonly getMediaStreamId: (tabId: number) => Promise<string>;
   readonly createOffscreenDocument: () => Promise<void>;
   readonly closeOffscreenDocument: () => Promise<void>;
   readonly sendMessageToOffscreen: (message: SWToOffscreen) => Promise<void>;
   readonly downloadFile: (url: string, filename: string) => Promise<void>;
+  readonly getRecordingData: () => Promise<string | null>;
+  readonly clearRecordingData: () => Promise<void>;
   readonly now: () => number;
 };
 
@@ -57,10 +55,6 @@ export type ChromeAPIs = {
 
 /** Create the initial idle state. */
 export const createInitialState = (): RecordingState => ({ status: 'idle' });
-
-/** Build a recording filename with format extension. */
-const buildFilename = (format: 'mp4' | 'webm'): string =>
-  `brorecord-recording.${format}`;
 
 /** Respond to a get-state query with the current state. */
 export const handleGetState = (state: RecordingState): SWToPopup => ({
@@ -115,43 +109,23 @@ export const handleStopRecording = (state: RecordingState): StopResult => {
   };
 };
 
-/** Handle an offscreen-result message. Pure state transition. */
+/** Handle an offscreen-result message. Pure state transition.
+ *  The offscreen document handles the download directly -- no blob data in the message. */
 export const handleOffscreenResult = (
-  state: RecordingState,
-  message: Extract<OffscreenToSW, { type: 'offscreen-result' }>,
+  _state: RecordingState,
+  _message: Extract<OffscreenToSW, { type: 'offscreen-result' }>,
 ): OffscreenResultOutcome => ({
   newState: { status: 'idle' },
-  download: {
-    url: message.blobUrl,
-    filename: buildFilename(message.format),
-  },
 });
 
 /** Handle an offscreen-error message. Pure state transition. */
 export const handleOffscreenError = (
-  state: RecordingState,
+  _state: RecordingState,
   message: Extract<OffscreenToSW, { type: 'offscreen-error' }>,
-): OffscreenErrorOutcome => {
-  if (message.fallbackBlobUrl) {
-    return {
-      newState: { status: 'idle' },
-      response: {
-        type: 'fallback-notice',
-        message: 'MP4 encoding failed. Saved as WebM instead.',
-      },
-      download: {
-        url: message.fallbackBlobUrl,
-        filename: buildFilename('webm'),
-      },
-    };
-  }
-
-  return {
-    newState: { status: 'idle' },
-    response: { type: 'error', message: message.error },
-    download: null,
-  };
-};
+): OffscreenErrorOutcome => ({
+  newState: { status: 'idle' },
+  response: { type: 'error', message: message.error },
+});
 
 // --- Wiring function -------------------------------------------------------
 
@@ -168,20 +142,20 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
         return handleGetState(state);
 
       case 'start-recording': {
-        // Effect: get active tab
+        // Effect: get active tab (for recording metadata)
         const tab = await apis.getActiveTab();
         if (!tab) {
           return { type: 'error', message: 'No active tab found' };
         }
 
-        // Effect: get media stream ID
-        const streamId = await apis.getMediaStreamId(tab.id);
+        // streamId is provided by the popup (which has the user gesture context)
+        const { streamId } = message;
 
         // Pure: compute state transition
         const result = handleStartRecording(state, tab.id, streamId, apis.now());
         state = result.newState;
 
-        // Effect: create offscreen document and forward stream ID
+        // Effect: create offscreen document and tell it to start capturing
         if (result.offscreenMessage) {
           await apis.createOffscreenDocument();
           await apis.sendMessageToOffscreen(result.offscreenMessage);
@@ -208,9 +182,12 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
         const result = handleOffscreenResult(state, message);
         state = result.newState;
 
-        // Effect: trigger download and close offscreen
-        if (result.download) {
-          await apis.downloadFile(result.download.url, result.download.filename);
+        // Effect: read recording data from storage, download, clean up, close offscreen
+        const dataUrl = await apis.getRecordingData();
+        if (dataUrl) {
+          const filename = `brorecord-recording.${message.format}`;
+          await apis.downloadFile(dataUrl, filename);
+          await apis.clearRecordingData();
         }
         await apis.closeOffscreenDocument();
 
@@ -222,10 +199,7 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
         const result = handleOffscreenError(state, message);
         state = result.newState;
 
-        // Effect: trigger fallback download if available, close offscreen
-        if (result.download) {
-          await apis.downloadFile(result.download.url, result.download.filename);
-        }
+        // Effect: close offscreen document
         await apis.closeOffscreenDocument();
 
         return result.response;

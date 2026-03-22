@@ -18,7 +18,7 @@ export type RecordingState =
 // --- Popup -> Service Worker messages -------------------------------------
 
 export type PopupToSW =
-  | { readonly type: 'start-recording' }
+  | { readonly type: 'start-recording'; readonly streamId: string }
   | { readonly type: 'stop-recording' }
   | { readonly type: 'get-state' };
 
@@ -38,8 +38,8 @@ export type SWToOffscreen =
 // --- Offscreen -> Service Worker messages ---------------------------------
 
 export type OffscreenToSW =
-  | { readonly type: 'offscreen-result'; readonly blobUrl: string; readonly format: 'mp4' | 'webm' }
-  | { readonly type: 'offscreen-error'; readonly error: string; readonly fallbackBlobUrl?: string };
+  | { readonly type: 'offscreen-result'; readonly format: 'mp4' | 'webm' }
+  | { readonly type: 'offscreen-error'; readonly error: string };
 
 // --- Unified Message type -------------------------------------------------
 

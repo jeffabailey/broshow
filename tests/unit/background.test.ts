@@ -53,7 +53,7 @@ describe('background-logic', () => {
   describe('handleStartRecording', () => {
     it('transitions from idle to recording with tabId and startTime', () => {
       const state: RecordingState = { status: 'idle' };
-      const result = handleStartRecording(state, 42, 'stream-abc', 5000);
+      const result = handleStartRecording(state, 42, 'stream-42', 5000);
 
       expect(result.newState).toEqual({
         status: 'recording',
@@ -64,7 +64,7 @@ describe('background-logic', () => {
 
     it('returns state-update response', () => {
       const state: RecordingState = { status: 'idle' };
-      const result = handleStartRecording(state, 42, 'stream-abc', 5000);
+      const result = handleStartRecording(state, 42, 'stream-42', 5000);
 
       expect(result.response).toEqual({
         type: 'state-update',
@@ -74,17 +74,17 @@ describe('background-logic', () => {
 
     it('returns offscreen-start command with streamId', () => {
       const state: RecordingState = { status: 'idle' };
-      const result = handleStartRecording(state, 42, 'stream-abc', 5000);
+      const result = handleStartRecording(state, 42, 'stream-42', 5000);
 
       expect(result.offscreenMessage).toEqual({
         type: 'offscreen-start',
-        streamId: 'stream-abc',
+        streamId: 'stream-42',
       });
     });
 
     it('returns error when already recording', () => {
       const state: RecordingState = { status: 'recording', tabId: 1, startTime: 1000 };
-      const result = handleStartRecording(state, 42, 'stream-abc', 5000);
+      const result = handleStartRecording(state, 42, 'stream-42', 5000);
 
       expect(result.newState).toEqual(state); // unchanged
       expect(result.response).toEqual({
@@ -96,7 +96,7 @@ describe('background-logic', () => {
 
     it('returns error when processing', () => {
       const state: RecordingState = { status: 'processing' };
-      const result = handleStartRecording(state, 42, 'stream-abc', 5000);
+      const result = handleStartRecording(state, 42, 'stream-42', 5000);
 
       expect(result.newState).toEqual(state); // unchanged
       expect(result.response).toEqual({
@@ -150,7 +150,6 @@ describe('background-logic', () => {
       const state: RecordingState = { status: 'processing' };
       const message: OffscreenToSW = {
         type: 'offscreen-result',
-        blobUrl: 'blob://recording',
         format: 'mp4',
       };
       const result = handleOffscreenResult(state, message);
@@ -158,43 +157,15 @@ describe('background-logic', () => {
       expect(result.newState).toEqual({ status: 'idle' });
     });
 
-    it('returns download info with filename containing format', () => {
+    it('returns only newState (download handled by service worker via storage)', () => {
       const state: RecordingState = { status: 'processing' };
       const message: OffscreenToSW = {
         type: 'offscreen-result',
-        blobUrl: 'blob://recording',
-        format: 'mp4',
-      };
-      const result = handleOffscreenResult(state, message);
-
-      expect(result.download).toEqual({
-        url: 'blob://recording',
-        filename: expect.stringContaining('.mp4'),
-      });
-    });
-
-    it('uses webm extension for webm format', () => {
-      const state: RecordingState = { status: 'processing' };
-      const message: OffscreenToSW = {
-        type: 'offscreen-result',
-        blobUrl: 'blob://recording',
         format: 'webm',
       };
       const result = handleOffscreenResult(state, message);
 
-      expect(result.download?.filename).toContain('.webm');
-    });
-
-    it('includes brorecord-recording filename prefix', () => {
-      const state: RecordingState = { status: 'processing' };
-      const message: OffscreenToSW = {
-        type: 'offscreen-result',
-        blobUrl: 'blob://recording',
-        format: 'mp4',
-      };
-      const result = handleOffscreenResult(state, message);
-
-      expect(result.download?.filename).toMatch(/^brorecord-recording\./);
+      expect(result).toEqual({ newState: { status: 'idle' } });
     });
   });
 
@@ -223,47 +194,6 @@ describe('background-logic', () => {
         message: 'Encoding failed',
       });
     });
-
-    it('returns download with fallback when fallbackBlobUrl is provided', () => {
-      const state: RecordingState = { status: 'processing' };
-      const message: OffscreenToSW = {
-        type: 'offscreen-error',
-        error: 'MP4 encoding failed',
-        fallbackBlobUrl: 'blob://fallback',
-      };
-      const result = handleOffscreenError(state, message);
-
-      expect(result.download).toEqual({
-        url: 'blob://fallback',
-        filename: expect.stringContaining('.webm'),
-      });
-    });
-
-    it('returns fallback-notice when fallback is used', () => {
-      const state: RecordingState = { status: 'processing' };
-      const message: OffscreenToSW = {
-        type: 'offscreen-error',
-        error: 'MP4 encoding failed',
-        fallbackBlobUrl: 'blob://fallback',
-      };
-      const result = handleOffscreenError(state, message);
-
-      expect(result.response).toEqual({
-        type: 'fallback-notice',
-        message: expect.stringContaining('WebM'),
-      });
-    });
-
-    it('returns no download when no fallback is available', () => {
-      const state: RecordingState = { status: 'processing' };
-      const message: OffscreenToSW = {
-        type: 'offscreen-error',
-        error: 'Encoding failed',
-      };
-      const result = handleOffscreenError(state, message);
-
-      expect(result.download).toBeNull();
-    });
   });
 });
 
@@ -276,18 +206,18 @@ describe('background wiring', () => {
   // Chrome API mocks as pure function stubs
   const createMockChromeAPIs = () => ({
     getActiveTab: vi.fn<() => Promise<{ id: number } | null>>(),
-    getMediaStreamId: vi.fn<(tabId: number) => Promise<string>>(),
     createOffscreenDocument: vi.fn<() => Promise<void>>(),
     closeOffscreenDocument: vi.fn<() => Promise<void>>(),
     sendMessageToOffscreen: vi.fn<(message: SWToOffscreen) => Promise<void>>(),
-    downloadFile: vi.fn<(url: string, filename: string) => Promise<void>>(),
+    downloadFile: vi.fn<(url: string, filename: string) => Promise<void>>().mockResolvedValue(undefined),
+    getRecordingData: vi.fn<() => Promise<string | null>>().mockResolvedValue(null),
+    clearRecordingData: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     now: vi.fn<() => number>(),
   });
 
-  it('handles start-recording: gets tab, stream, creates offscreen, forwards streamId', async () => {
+  it('handles start-recording: gets tab, creates offscreen, sends start with streamId from message', async () => {
     const apis = createMockChromeAPIs();
     apis.getActiveTab.mockResolvedValue({ id: 42 });
-    apis.getMediaStreamId.mockResolvedValue('stream-abc');
     apis.createOffscreenDocument.mockResolvedValue(undefined);
     apis.sendMessageToOffscreen.mockResolvedValue(undefined);
     apis.now.mockReturnValue(5000);
@@ -295,14 +225,13 @@ describe('background wiring', () => {
     const { createMessageHandler } = await import('../../src/background-logic');
     const handleMessage = createMessageHandler(apis);
 
-    const response = await handleMessage({ type: 'start-recording' });
+    const response = await handleMessage({ type: 'start-recording', streamId: 'stream-42' });
 
     expect(apis.getActiveTab).toHaveBeenCalled();
-    expect(apis.getMediaStreamId).toHaveBeenCalledWith(42);
     expect(apis.createOffscreenDocument).toHaveBeenCalled();
     expect(apis.sendMessageToOffscreen).toHaveBeenCalledWith({
       type: 'offscreen-start',
-      streamId: 'stream-abc',
+      streamId: 'stream-42',
     });
     expect(response).toEqual({
       type: 'state-update',
@@ -317,7 +246,7 @@ describe('background wiring', () => {
     const { createMessageHandler } = await import('../../src/background-logic');
     const handleMessage = createMessageHandler(apis);
 
-    const response = await handleMessage({ type: 'start-recording' });
+    const response = await handleMessage({ type: 'start-recording', streamId: 'stream-42' });
 
     expect(response).toEqual({
       type: 'error',
@@ -328,7 +257,6 @@ describe('background wiring', () => {
   it('handles stop-recording: sends stop to offscreen', async () => {
     const apis = createMockChromeAPIs();
     apis.getActiveTab.mockResolvedValue({ id: 42 });
-    apis.getMediaStreamId.mockResolvedValue('stream-abc');
     apis.createOffscreenDocument.mockResolvedValue(undefined);
     apis.sendMessageToOffscreen.mockResolvedValue(undefined);
     apis.now.mockReturnValue(5000);
@@ -337,7 +265,7 @@ describe('background wiring', () => {
     const handleMessage = createMessageHandler(apis);
 
     // First start recording
-    await handleMessage({ type: 'start-recording' });
+    await handleMessage({ type: 'start-recording', streamId: 'stream-42' });
 
     // Then stop
     const response = await handleMessage({ type: 'stop-recording' });
@@ -365,34 +293,31 @@ describe('background wiring', () => {
     });
   });
 
-  it('handles offscreen-result: triggers download and resets to idle', async () => {
+  it('handles offscreen-result: reads data from storage, downloads, cleans up, closes offscreen', async () => {
     const apis = createMockChromeAPIs();
     apis.getActiveTab.mockResolvedValue({ id: 42 });
-    apis.getMediaStreamId.mockResolvedValue('stream-abc');
     apis.createOffscreenDocument.mockResolvedValue(undefined);
     apis.sendMessageToOffscreen.mockResolvedValue(undefined);
     apis.closeOffscreenDocument.mockResolvedValue(undefined);
-    apis.downloadFile.mockResolvedValue(undefined);
+    apis.getRecordingData.mockResolvedValue('data:video/webm;base64,fakedata');
     apis.now.mockReturnValue(5000);
 
     const { createMessageHandler } = await import('../../src/background-logic');
     const handleMessage = createMessageHandler(apis);
 
     // Start and stop to reach processing state
-    await handleMessage({ type: 'start-recording' });
+    await handleMessage({ type: 'start-recording', streamId: 'stream-42' });
     await handleMessage({ type: 'stop-recording' });
 
-    // Offscreen sends result
+    // Offscreen sends lightweight notification (no blob data)
     const response = await handleMessage({
       type: 'offscreen-result',
-      blobUrl: 'blob://recording',
-      format: 'mp4',
+      format: 'webm',
     });
 
-    expect(apis.downloadFile).toHaveBeenCalledWith(
-      'blob://recording',
-      expect.stringContaining('.mp4'),
-    );
+    expect(apis.getRecordingData).toHaveBeenCalled();
+    expect(apis.downloadFile).toHaveBeenCalledWith('data:video/webm;base64,fakedata', 'brorecord-recording.webm');
+    expect(apis.clearRecordingData).toHaveBeenCalled();
     expect(apis.closeOffscreenDocument).toHaveBeenCalled();
 
     // State should be idle now
@@ -403,44 +328,9 @@ describe('background wiring', () => {
     });
   });
 
-  it('handles offscreen-error with fallback: downloads fallback webm', async () => {
+  it('handles offscreen-error: closes offscreen and returns error', async () => {
     const apis = createMockChromeAPIs();
     apis.getActiveTab.mockResolvedValue({ id: 42 });
-    apis.getMediaStreamId.mockResolvedValue('stream-abc');
-    apis.createOffscreenDocument.mockResolvedValue(undefined);
-    apis.sendMessageToOffscreen.mockResolvedValue(undefined);
-    apis.closeOffscreenDocument.mockResolvedValue(undefined);
-    apis.downloadFile.mockResolvedValue(undefined);
-    apis.now.mockReturnValue(5000);
-
-    const { createMessageHandler } = await import('../../src/background-logic');
-    const handleMessage = createMessageHandler(apis);
-
-    // Reach processing state
-    await handleMessage({ type: 'start-recording' });
-    await handleMessage({ type: 'stop-recording' });
-
-    const response = await handleMessage({
-      type: 'offscreen-error',
-      error: 'MP4 failed',
-      fallbackBlobUrl: 'blob://fallback',
-    });
-
-    expect(apis.downloadFile).toHaveBeenCalledWith(
-      'blob://fallback',
-      expect.stringContaining('.webm'),
-    );
-    expect(apis.closeOffscreenDocument).toHaveBeenCalled();
-    expect(response).toEqual({
-      type: 'fallback-notice',
-      message: expect.stringContaining('WebM'),
-    });
-  });
-
-  it('handles offscreen-error without fallback: returns error', async () => {
-    const apis = createMockChromeAPIs();
-    apis.getActiveTab.mockResolvedValue({ id: 42 });
-    apis.getMediaStreamId.mockResolvedValue('stream-abc');
     apis.createOffscreenDocument.mockResolvedValue(undefined);
     apis.sendMessageToOffscreen.mockResolvedValue(undefined);
     apis.closeOffscreenDocument.mockResolvedValue(undefined);
@@ -450,7 +340,7 @@ describe('background wiring', () => {
     const handleMessage = createMessageHandler(apis);
 
     // Reach processing state
-    await handleMessage({ type: 'start-recording' });
+    await handleMessage({ type: 'start-recording', streamId: 'stream-42' });
     await handleMessage({ type: 'stop-recording' });
 
     const response = await handleMessage({

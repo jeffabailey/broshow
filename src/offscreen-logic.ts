@@ -21,9 +21,8 @@ export const buildMediaConstraints = (streamId: string): MediaStreamConstraints 
 
 // --- Message builders ------------------------------------------------------
 
-export const buildResultMessage = (blobUrl: string, format: 'mp4' | 'webm'): OffscreenToSW => ({
+export const buildResultMessage = (format: 'mp4' | 'webm'): OffscreenToSW => ({
   type: 'offscreen-result',
-  blobUrl,
   format,
 });
 
@@ -36,7 +35,7 @@ export const buildErrorMessage = (error: string): OffscreenToSW => ({
 
 export type MediaAPIs = {
   readonly getUserMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
-  readonly createObjectURL: (blob: Blob) => string;
+  readonly storeRecording: (blob: Blob) => Promise<void>;
   readonly sendMessage: (message: OffscreenToSW) => void;
 };
 
@@ -75,30 +74,34 @@ export const createOffscreenMessageHandler = (
     }
   };
 
-  const handleStop = async (): Promise<void> => {
+  const handleStop = async (): Promise<OffscreenToSW> => {
     if (!session || !stream) {
-      apis.sendMessage(buildErrorMessage('No active recording session'));
-      return;
+      const errorMsg = buildErrorMessage('No active recording session');
+      apis.sendMessage(errorMsg);
+      return errorMsg;
     }
 
     try {
       const recordingBlob = await session.stop();
-      const blobUrl = apis.createObjectURL(recordingBlob);
-      apis.sendMessage(buildResultMessage(blobUrl, 'webm'));
+      await apis.storeRecording(recordingBlob);
+      const resultMsg = buildResultMessage('webm');
+      apis.sendMessage(resultMsg);
+      return resultMsg;
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      apis.sendMessage(buildErrorMessage(errorMessage));
+      const errorMsg = buildErrorMessage(errorMessage);
+      apis.sendMessage(errorMsg);
+      return errorMsg;
     } finally {
-      // Don't stop stream tracks here -- Chrome will auto-close the offscreen
-      // document if USER_MEDIA has no active tracks, invalidating blob URLs.
-      // The service worker calls closeOffscreenDocument() after downloading,
-      // which destroys the document and cleans up all resources.
+      // Data URLs are self-contained strings that survive offscreen document
+      // closure, so cleanup here is safe. Chrome will auto-close the offscreen
+      // document when USER_MEDIA has no active tracks.
       session = null;
       stream = null;
     }
   };
 
-  return async (message: SWToOffscreen): Promise<void> => {
+  return async (message: SWToOffscreen): Promise<OffscreenToSW | void> => {
     switch (message.type) {
       case 'offscreen-start':
         return handleStart(message.streamId);

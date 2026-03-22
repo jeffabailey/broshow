@@ -23,24 +23,22 @@ describe('offscreen-logic', () => {
   });
 
   describe('buildResultMessage', () => {
-    it('creates offscreen-result message with mp4 format and blobUrl', async () => {
+    it('creates offscreen-result message with mp4 format (no blob data)', async () => {
       const { buildResultMessage } = await import('../../src/offscreen-logic');
-      const message = buildResultMessage('blob:chrome-extension://id/1234', 'mp4');
+      const message = buildResultMessage('mp4');
 
       expect(message).toEqual({
         type: 'offscreen-result',
-        blobUrl: 'blob:chrome-extension://id/1234',
         format: 'mp4',
       });
     });
 
-    it('creates offscreen-result message with webm format and blobUrl', async () => {
+    it('creates offscreen-result message with webm format (no blob data)', async () => {
       const { buildResultMessage } = await import('../../src/offscreen-logic');
-      const message = buildResultMessage('blob:chrome-extension://id/5678', 'webm');
+      const message = buildResultMessage('webm');
 
       expect(message).toEqual({
         type: 'offscreen-result',
-        blobUrl: 'blob:chrome-extension://id/5678',
         format: 'webm',
       });
     });
@@ -67,7 +65,7 @@ describe('offscreen-logic', () => {
 describe('offscreen wiring', () => {
   const createMockMediaAPIs = () => ({
     getUserMedia: vi.fn<(constraints: MediaStreamConstraints) => Promise<MediaStream>>(),
-    createObjectURL: vi.fn<(blob: Blob) => string>().mockReturnValue('blob:chrome-extension://fake-id/1234'),
+    storeRecording: vi.fn<(blob: Blob) => Promise<void>>().mockResolvedValue(undefined),
     sendMessage: vi.fn<(message: OffscreenToSW) => void>(),
   });
 
@@ -112,7 +110,7 @@ describe('offscreen wiring', () => {
     expect(factory).toHaveBeenCalledWith(mockStream);
   });
 
-  it('handles offscreen-stop: stops session, downloads blob directly, sends lightweight result', async () => {
+  it('handles offscreen-stop: stops session, stores recording in storage, sends lightweight notification', async () => {
     const apis = createMockMediaAPIs();
     const mockStream = createMockStream();
     apis.getUserMedia.mockResolvedValue(mockStream);
@@ -126,10 +124,9 @@ describe('offscreen wiring', () => {
     await handleMessage({ type: 'offscreen-stop' });
 
     expect(stopFn).toHaveBeenCalledOnce();
-    expect(apis.createObjectURL).toHaveBeenCalledWith(webmBlob);
+    expect(apis.storeRecording).toHaveBeenCalledWith(webmBlob);
     expect(apis.sendMessage).toHaveBeenCalledWith({
       type: 'offscreen-result',
-      blobUrl: 'blob:chrome-extension://fake-id/1234',
       format: 'webm',
     });
   });
