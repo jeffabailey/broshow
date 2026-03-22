@@ -1,0 +1,167 @@
+{
+  "roadmap": {
+    "project_id": "browser-tab-recorder",
+    "created_at": "2026-03-22T17:33:44Z",
+    "total_steps": 12,
+    "phases": 3
+  },
+  "phases": [
+    {
+      "id": "01",
+      "name": "Walking Skeleton: Manifest, Popup, Service Worker, Offscreen, WebM Download",
+      "steps": [
+        {
+          "id": "01-01",
+          "name": "Project scaffolding and build pipeline",
+          "criteria": "Running `npm run build` produces a `dist/` directory containing a valid Manifest V3 extension that can be loaded in Chromium without errors. The manifest declares tabCapture and offscreen permissions.",
+          "files_to_modify": [
+            "package.json",
+            "tsconfig.json",
+            "esbuild.config.mjs",
+            "src/manifest.json"
+          ],
+          "estimate_minutes": 30
+        },
+        {
+          "id": "01-02",
+          "name": "Shared message and state types",
+          "criteria": "A types module defines message types for start-recording, stop-recording, recording-started, recording-stopped, and recording-error. A RecordingState type distinguishes idle, recording, and error states. The module contains no runtime code.",
+          "files_to_modify": [
+            "src/types.ts"
+          ],
+          "estimate_minutes": 15
+        },
+        {
+          "id": "01-03",
+          "name": "Popup UI with Start and Stop controls",
+          "criteria": "Opening the extension popup shows a Start Recording button when idle and a Stop Recording button when recording. Clicking Start sends a start-recording message to the service worker. Clicking Stop sends a stop-recording message. The popup queries the service worker for current state on open.",
+          "files_to_modify": [
+            "src/popup.html",
+            "src/popup.css",
+            "src/popup.ts"
+          ],
+          "estimate_minutes": 30
+        },
+        {
+          "id": "01-04",
+          "name": "Service worker orchestration and tab capture",
+          "criteria": "The service worker receives a start-recording message, calls chrome.tabCapture.getMediaStreamId for the active tab, creates an offscreen document, and forwards the stream ID. On stop-recording, it messages the offscreen document to stop. It owns RecordingState and responds to state queries from the popup.",
+          "files_to_modify": [
+            "src/background.ts"
+          ],
+          "estimate_minutes": 45
+        },
+        {
+          "id": "01-05",
+          "name": "Offscreen document with MediaRecorder capture",
+          "criteria": "The offscreen document receives a stream ID, creates a MediaStream via navigator.mediaDevices.getUserMedia with the constraint, starts a MediaRecorder, collects chunks, and on stop returns the recorded blob to the service worker. The output is a valid WebM video.",
+          "files_to_modify": [
+            "src/offscreen.html",
+            "src/offscreen.ts"
+          ],
+          "estimate_minutes": 45
+        },
+        {
+          "id": "01-06",
+          "name": "WebM download and walking skeleton acceptance test",
+          "criteria": "After recording stops, the service worker triggers chrome.downloads.download with the WebM blob. A Playwright acceptance test loads the extension, opens a test page, clicks Start, waits, clicks Stop, and verifies a valid WebM file was downloaded.",
+          "files_to_modify": [
+            "src/background.ts",
+            "tests/acceptance/walking-skeleton.spec.ts"
+          ],
+          "estimate_minutes": 60
+        }
+      ]
+    },
+    {
+      "id": "02",
+      "name": "Mp4 Output: Muxing Integration and WebM Fallback",
+      "steps": [
+        {
+          "id": "02-01",
+          "name": "Mp4 muxing wrapper",
+          "criteria": "A pure function accepts a WebM Blob and returns a Promise that resolves to an mp4 Blob. The function wraps the mp4-mux library. A unit test verifies that a sample WebM buffer is converted to a buffer starting with an mp4 ftyp box signature.",
+          "files_to_modify": [
+            "src/mp4.ts",
+            "tests/unit/mp4.test.ts"
+          ],
+          "estimate_minutes": 45
+        },
+        {
+          "id": "02-02",
+          "name": "Integrate mp4 muxing into offscreen capture pipeline",
+          "criteria": "After MediaRecorder stops, the offscreen document passes the WebM blob through the mp4 muxing wrapper before returning it to the service worker. The downloaded file has an .mp4 extension and is a valid mp4 container.",
+          "files_to_modify": [
+            "src/offscreen.ts"
+          ],
+          "estimate_minutes": 30
+        },
+        {
+          "id": "02-03",
+          "name": "WebM fallback on muxing failure and acceptance test",
+          "criteria": "If mp4 muxing throws an error, the offscreen document falls back to the original WebM blob, the service worker downloads it with a .webm extension, and sends a recording-error message with a human-readable explanation. An acceptance test verifies that when muxing fails, a WebM file is downloaded and a fallback message is shown in the popup.",
+          "files_to_modify": [
+            "src/offscreen.ts",
+            "src/popup.ts",
+            "tests/acceptance/milestone-2-mp4-output.spec.ts"
+          ],
+          "estimate_minutes": 45
+        }
+      ]
+    },
+    {
+      "id": "03",
+      "name": "Polish: Recording Indicator, Tab Audio, Timestamped Filename",
+      "steps": [
+        {
+          "id": "03-01",
+          "name": "Recording indicator badge on extension icon",
+          "criteria": "When recording starts, the extension icon shows a red badge with 'REC' text via chrome.action.setBadgeText. When recording stops, the badge is cleared. An acceptance test verifies the badge appears during recording and disappears after stopping.",
+          "files_to_modify": [
+            "src/background.ts",
+            "tests/acceptance/milestone-3-polish.spec.ts"
+          ],
+          "estimate_minutes": 20
+        },
+        {
+          "id": "03-02",
+          "name": "Tab audio capture",
+          "criteria": "The captured MediaStream includes the tab's audio track. The recorded mp4 file contains an audio stream when the tab is playing audio. A unit test verifies that the MediaRecorder is configured with both video and audio tracks.",
+          "files_to_modify": [
+            "src/offscreen.ts",
+            "tests/unit/offscreen-audio.test.ts"
+          ],
+          "estimate_minutes": 30
+        },
+        {
+          "id": "03-03",
+          "name": "Timestamped filename and final acceptance tests",
+          "criteria": "Downloaded files are named with the pattern brorecord-YYYY-MM-DD-HHmmss.mp4 using the user's local time. An acceptance test verifies the downloaded filename matches the expected pattern. All milestone 3 acceptance tests pass.",
+          "files_to_modify": [
+            "src/background.ts",
+            "tests/acceptance/milestone-3-polish.spec.ts"
+          ],
+          "estimate_minutes": 25
+        }
+      ]
+    }
+  ],
+  "implementation_scope": {
+    "source_directories": [
+      "src/"
+    ],
+    "test_directories": [
+      "tests/acceptance/",
+      "tests/unit/"
+    ],
+    "excluded_patterns": [
+      "node_modules/**",
+      "dist/**"
+    ]
+  },
+  "validation": {
+    "status": "pending",
+    "reviewer": "nw-solution-architect",
+    "approved_at": null
+  }
+}

@@ -1,0 +1,67 @@
+journey:
+  name: record-tab
+  feature: browser-tab-recorder
+  persona: Browser user who needs to capture tab content
+  goal: Record a browser tab and save as mp4 with minimal effort
+
+  steps:
+    - id: install
+      action: Install extension from store or load unpacked
+      touchpoint: Chrome Web Store / browser extensions page
+      artifact_produced: extension-icon-in-toolbar
+      emotion: curious
+      confidence: 0.7
+
+    - id: click-icon
+      action: Click extension icon in toolbar
+      touchpoint: Browser toolbar
+      artifact_consumed: extension-icon-in-toolbar
+      artifact_produced: popup-ui
+      emotion: confident
+      confidence: 0.9
+
+    - id: start-recording
+      action: Click "Start Recording" button in popup
+      touchpoint: Extension popup
+      artifact_consumed: popup-ui
+      artifact_produced: recording-indicator
+      emotion: assured
+      confidence: 0.9
+      permissions_required:
+        - tabCapture
+
+    - id: recording-active
+      action: Continue browsing while tab is recorded
+      touchpoint: Browser tab (passive)
+      artifact_consumed: recording-indicator
+      emotion: assured
+      confidence: 0.9
+
+    - id: stop-recording
+      action: Click extension icon or Stop button
+      touchpoint: Extension popup / toolbar
+      artifact_consumed: recording-indicator
+      artifact_produced: processing-state
+      emotion: satisfied
+      confidence: 0.9
+
+    - id: file-saved
+      action: mp4 file downloads automatically
+      touchpoint: Browser downloads
+      artifact_consumed: processing-state
+      artifact_produced: mp4-file
+      emotion: delighted
+      confidence: 0.95
+
+  error_paths:
+    - step: start-recording
+      error: Permission denied
+      recovery: Show message with retry option
+
+    - step: recording-active
+      error: Tab closed during recording
+      recovery: Save captured content, notify user
+
+    - step: file-saved
+      error: mp4 muxing fails
+      recovery: Fall back to WebM download with explanation

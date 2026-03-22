@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>BroRecord Audio Test Page</title>
+  <style>
+    body {
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      background: #1a1a2e;
+      color: white;
+      font-family: system-ui, sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div>
+    <h1>Audio Test Page</h1>
+    <button id="play-audio">Play Test Tone</button>
+    <p id="status">Click to play a 440Hz test tone</p>
+  </div>
+  <script>
+    document.getElementById('play-audio').addEventListener('click', () => {
+      const ctx = new AudioContext();
+      const osc = ctx.createOscillator();
+      osc.frequency.value = 440; // A4 note
+      osc.connect(ctx.destination);
+      osc.start();
+      document.getElementById('status').textContent = 'Playing 440Hz tone...';
+      // Stop after 10 seconds
+      setTimeout(() => {
+        osc.stop();
+        document.getElementById('status').textContent = 'Tone stopped';
+      }, 10000);
+    });
+  </script>
+</body>
+</html>

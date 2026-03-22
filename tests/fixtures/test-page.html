@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>BroRecord Test Page</title>
+  <style>
+    body {
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      font-family: system-ui, sans-serif;
+      font-size: 2rem;
+    }
+    .content {
+      text-align: center;
+    }
+    .timestamp {
+      font-size: 1rem;
+      margin-top: 1rem;
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="content">
+    <h1>BroRecord Test Page</h1>
+    <p>This page is used for acceptance testing.</p>
+    <p class="timestamp" id="clock"></p>
+  </div>
+  <script>
+    // Updating clock proves the recording captured live content
+    const update = () => {
+      document.getElementById('clock').textContent = new Date().toISOString();
+      requestAnimationFrame(update);
+    };
+    update();
+  </script>
+</body>
+</html>
