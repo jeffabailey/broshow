@@ -1,6 +1,10 @@
 import { test, expect, type BrowserContext } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const EXTENSION_PATH = path.resolve(__dirname, '../../dist');
 const DOWNLOAD_DIR = path.resolve(__dirname, '../downloads');

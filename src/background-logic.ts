@@ -58,9 +58,9 @@ export type ChromeAPIs = {
 /** Create the initial idle state. */
 export const createInitialState = (): RecordingState => ({ status: 'idle' });
 
-/** Build a recording filename with timestamp and format extension. */
+/** Build a recording filename with format extension. */
 const buildFilename = (format: 'mp4' | 'webm'): string =>
-  `recording-${Date.now()}.${format}`;
+  `brorecord-recording.${format}`;
 
 /** Respond to a get-state query with the current state. */
 export const handleGetState = (state: RecordingState): SWToPopup => ({

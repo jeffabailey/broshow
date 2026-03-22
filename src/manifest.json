@@ -5,7 +5,8 @@
   "description": "Record a browser tab and save as mp4",
   "permissions": [
     "tabCapture",
-    "offscreen"
+    "offscreen",
+    "downloads"
   ],
   "action": {
     "default_popup": "popup.html"

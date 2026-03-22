@@ -185,7 +185,7 @@ describe('background-logic', () => {
       expect(result.download?.filename).toContain('.webm');
     });
 
-    it('includes recording filename prefix', () => {
+    it('includes brorecord-recording filename prefix', () => {
       const state: RecordingState = { status: 'processing' };
       const message: OffscreenToSW = {
         type: 'offscreen-result',
@@ -194,7 +194,7 @@ describe('background-logic', () => {
       };
       const result = handleOffscreenResult(state, message);
 
-      expect(result.download?.filename).toMatch(/^recording-/);
+      expect(result.download?.filename).toMatch(/^brorecord-recording\./);
     });
   });
 
