@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { SWToOffscreen, OffscreenToSW } from '../../src/types';
+import { describe, it, expect, vi } from 'vitest';
+import type { OffscreenToSW } from '../../src/types';
 
 // ---------------------------------------------------------------------------
 // Pure offscreen logic -- message handling and media constraints
@@ -7,69 +7,40 @@ import type { SWToOffscreen, OffscreenToSW } from '../../src/types';
 
 describe('offscreen-logic', () => {
   describe('buildMediaConstraints', () => {
-    it('creates getUserMedia constraints from streamId', async () => {
+    it('creates getUserMedia constraints for tab capture with streamId', async () => {
       const { buildMediaConstraints } = await import('../../src/offscreen-logic');
-      const constraints = buildMediaConstraints('stream-abc');
+      const constraints = buildMediaConstraints('stream-id-123');
 
       expect(constraints).toEqual({
         audio: {
-          mandatory: {
-            chromeMediaSource: 'tab',
-            chromeMediaSourceId: 'stream-abc',
-          },
+          mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: 'stream-id-123' },
         },
         video: {
-          mandatory: {
-            chromeMediaSource: 'tab',
-            chromeMediaSourceId: 'stream-abc',
-          },
+          mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: 'stream-id-123' },
         },
       });
-    });
-  });
-
-  describe('selectMimeType', () => {
-    it('returns preferred codec when supported', async () => {
-      const { selectMimeType } = await import('../../src/offscreen-logic');
-      const isSupported = (mime: string) => mime === 'video/webm;codecs=vp8,opus';
-
-      expect(selectMimeType(isSupported)).toBe('video/webm;codecs=vp8,opus');
-    });
-
-    it('falls back to video/webm when preferred not supported', async () => {
-      const { selectMimeType } = await import('../../src/offscreen-logic');
-      const isSupported = (mime: string) => mime === 'video/webm';
-
-      expect(selectMimeType(isSupported)).toBe('video/webm');
-    });
-
-    it('returns video/webm as last resort when nothing supported', async () => {
-      const { selectMimeType } = await import('../../src/offscreen-logic');
-      const isSupported = (_mime: string) => false;
-
-      expect(selectMimeType(isSupported)).toBe('video/webm');
     });
   });
 
   describe('buildResultMessage', () => {
-    it('creates offscreen-result message with mp4 format from blob URL', async () => {
+    it('creates offscreen-result message with mp4 format and blobUrl', async () => {
       const { buildResultMessage } = await import('../../src/offscreen-logic');
-      const message = buildResultMessage('blob://recording-123', 'mp4');
+      const message = buildResultMessage('blob:chrome-extension://id/1234', 'mp4');
 
       expect(message).toEqual({
         type: 'offscreen-result',
-        blobUrl: 'blob://recording-123',
+        blobUrl: 'blob:chrome-extension://id/1234',
         format: 'mp4',
       });
     });
 
-    it('creates offscreen-result message with webm format when specified', async () => {
+    it('creates offscreen-result message with webm format and blobUrl', async () => {
       const { buildResultMessage } = await import('../../src/offscreen-logic');
-      const message = buildResultMessage('blob://recording-123', 'webm');
+      const message = buildResultMessage('blob:chrome-extension://id/5678', 'webm');
 
       expect(message).toEqual({
         type: 'offscreen-result',
-        blobUrl: 'blob://recording-123',
+        blobUrl: 'blob:chrome-extension://id/5678',
         format: 'webm',
       });
     });
@@ -86,39 +57,17 @@ describe('offscreen-logic', () => {
       });
     });
   });
-
-  describe('assembleBlob', () => {
-    it('creates a Blob from chunks with webm mime type', async () => {
-      const { assembleBlob } = await import('../../src/offscreen-logic');
-      const chunk1 = new Blob(['data1']);
-      const chunk2 = new Blob(['data2']);
-
-      const result = assembleBlob([chunk1, chunk2]);
-
-      expect(result.type).toBe('video/webm');
-      expect(result.size).toBeGreaterThan(0);
-    });
-
-    it('creates an empty blob from no chunks', async () => {
-      const { assembleBlob } = await import('../../src/offscreen-logic');
-      const result = assembleBlob([]);
-
-      expect(result.type).toBe('video/webm');
-      expect(result.size).toBe(0);
-    });
-  });
 });
 
 // ---------------------------------------------------------------------------
-// Offscreen wiring -- tests verifying MediaRecorder integration
+// Offscreen wiring -- tests verifying recorder session integration
 // Uses injected mock browser APIs (no real browser needed)
 // ---------------------------------------------------------------------------
 
 describe('offscreen wiring', () => {
   const createMockMediaAPIs = () => ({
     getUserMedia: vi.fn<(constraints: MediaStreamConstraints) => Promise<MediaStream>>(),
-    isTypeSupported: vi.fn<(mimeType: string) => boolean>(),
-    createObjectURL: vi.fn<(blob: Blob) => string>(),
+    createObjectURL: vi.fn<(blob: Blob) => string>().mockReturnValue('blob:chrome-extension://fake-id/1234'),
     sendMessage: vi.fn<(message: OffscreenToSW) => void>(),
   });
 
@@ -132,99 +81,55 @@ describe('offscreen wiring', () => {
     } as unknown as MediaStream;
   };
 
-  // Minimal mock MediaRecorder that fires events synchronously for testing
-  const createMockMediaRecorderClass = () => {
-    let instance: {
-      start: () => void;
-      stop: () => void;
-      ondataavailable: ((event: { data: Blob }) => void) | null;
-      onstop: (() => void) | null;
-      onerror: ((event: { error: Error }) => void) | null;
-      state: string;
-    } | null = null;
-
-    const MockMediaRecorder = vi.fn().mockImplementation((_stream: MediaStream, _options: { mimeType: string }) => {
-      instance = {
-        start: vi.fn().mockImplementation(() => {
-          if (instance) instance.state = 'recording';
-        }),
-        stop: vi.fn().mockImplementation(() => {
-          if (instance) {
-            instance.state = 'inactive';
-            // Simulate data available then stop
-            if (instance.ondataavailable) {
-              instance.ondataavailable({ data: new Blob(['recorded-data'], { type: 'video/webm' }) });
-            }
-            if (instance.onstop) {
-              instance.onstop();
-            }
-          }
-        }),
-        ondataavailable: null,
-        onstop: null,
-        onerror: null,
-        state: 'inactive',
-      };
-      return instance;
-    });
-
-    return { MockMediaRecorder, getInstance: () => instance };
+  // Mock recorder session factory
+  const createMockRecorderFactory = () => {
+    const webmBlob = new Blob(['fake-webm-data'], { type: 'video/webm' });
+    const stopFn = vi.fn<() => Promise<Blob>>().mockResolvedValue(webmBlob);
+    const factory = vi.fn().mockReturnValue({ stop: stopFn });
+    return { factory, stopFn, webmBlob };
   };
 
-  it('handles offscreen-start: acquires stream and starts MediaRecorder', async () => {
+  it('handles offscreen-start: acquires user media with streamId and creates recorder session', async () => {
     const apis = createMockMediaAPIs();
     const mockStream = createMockStream();
     apis.getUserMedia.mockResolvedValue(mockStream);
-    apis.isTypeSupported.mockReturnValue(true);
 
-    const { MockMediaRecorder } = createMockMediaRecorderClass();
+    const { factory } = createMockRecorderFactory();
 
     const { createOffscreenMessageHandler } = await import('../../src/offscreen-logic');
-    const handleMessage = createOffscreenMessageHandler(apis, MockMediaRecorder as unknown as typeof MediaRecorder);
+    const handleMessage = createOffscreenMessageHandler(apis, factory);
 
-    await handleMessage({ type: 'offscreen-start', streamId: 'stream-xyz' });
+    await handleMessage({ type: 'offscreen-start', streamId: 'test-stream-id' });
 
     expect(apis.getUserMedia).toHaveBeenCalledWith({
       audio: {
-        mandatory: {
-          chromeMediaSource: 'tab',
-          chromeMediaSourceId: 'stream-xyz',
-        },
+        mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: 'test-stream-id' },
       },
       video: {
-        mandatory: {
-          chromeMediaSource: 'tab',
-          chromeMediaSourceId: 'stream-xyz',
-        },
+        mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: 'test-stream-id' },
       },
     });
-    expect(MockMediaRecorder).toHaveBeenCalledWith(mockStream, {
-      mimeType: 'video/webm;codecs=vp8,opus',
-    });
+    expect(factory).toHaveBeenCalledWith(mockStream);
   });
 
-  it('handles offscreen-stop: stops recorder, assembles blob, sends result', async () => {
+  it('handles offscreen-stop: stops session, downloads blob directly, sends lightweight result', async () => {
     const apis = createMockMediaAPIs();
     const mockStream = createMockStream();
     apis.getUserMedia.mockResolvedValue(mockStream);
-    apis.isTypeSupported.mockReturnValue(true);
-    apis.createObjectURL.mockReturnValue('blob://test-url');
 
-    const { MockMediaRecorder } = createMockMediaRecorderClass();
+    const { factory, stopFn, webmBlob } = createMockRecorderFactory();
 
     const { createOffscreenMessageHandler } = await import('../../src/offscreen-logic');
-    const handleMessage = createOffscreenMessageHandler(apis, MockMediaRecorder as unknown as typeof MediaRecorder);
+    const handleMessage = createOffscreenMessageHandler(apis, factory);
 
-    // Start recording first
-    await handleMessage({ type: 'offscreen-start', streamId: 'stream-xyz' });
-
-    // Stop recording - the mock fires ondataavailable + onstop synchronously
+    await handleMessage({ type: 'offscreen-start', streamId: 'test-stream-id' });
     await handleMessage({ type: 'offscreen-stop' });
 
-    expect(apis.createObjectURL).toHaveBeenCalled();
+    expect(stopFn).toHaveBeenCalledOnce();
+    expect(apis.createObjectURL).toHaveBeenCalledWith(webmBlob);
     expect(apis.sendMessage).toHaveBeenCalledWith({
       type: 'offscreen-result',
-      blobUrl: 'blob://test-url',
+      blobUrl: 'blob:chrome-extension://fake-id/1234',
       format: 'webm',
     });
   });
@@ -232,14 +137,13 @@ describe('offscreen wiring', () => {
   it('sends error message when getUserMedia fails', async () => {
     const apis = createMockMediaAPIs();
     apis.getUserMedia.mockRejectedValue(new Error('Permission denied'));
-    apis.isTypeSupported.mockReturnValue(true);
 
-    const { MockMediaRecorder } = createMockMediaRecorderClass();
+    const { factory } = createMockRecorderFactory();
 
     const { createOffscreenMessageHandler } = await import('../../src/offscreen-logic');
-    const handleMessage = createOffscreenMessageHandler(apis, MockMediaRecorder as unknown as typeof MediaRecorder);
+    const handleMessage = createOffscreenMessageHandler(apis, factory);
 
-    await handleMessage({ type: 'offscreen-start', streamId: 'stream-xyz' });
+    await handleMessage({ type: 'offscreen-start', streamId: 'test-stream-id' });
 
     expect(apis.sendMessage).toHaveBeenCalledWith({
       type: 'offscreen-error',
@@ -247,112 +151,99 @@ describe('offscreen wiring', () => {
     });
   });
 
-  it('sends error message when MediaRecorder emits error', async () => {
+  it('sends error message when recorder session stop fails', async () => {
     const apis = createMockMediaAPIs();
     const mockStream = createMockStream();
     apis.getUserMedia.mockResolvedValue(mockStream);
-    apis.isTypeSupported.mockReturnValue(true);
 
-    let capturedInstance: { onerror: ((event: { error: Error }) => void) | null } | null = null;
-
-    const MockMediaRecorder = vi.fn().mockImplementation((_stream: MediaStream, _options: { mimeType: string }) => {
-      capturedInstance = {
-        start: vi.fn(),
-        stop: vi.fn(),
-        ondataavailable: null,
-        onstop: null,
-        onerror: null,
-        state: 'inactive',
-      };
-      return capturedInstance;
-    });
+    const stopFn = vi.fn<() => Promise<Blob>>().mockRejectedValue(new Error('Encoding failed'));
+    const factory = vi.fn().mockReturnValue({ stop: stopFn });
 
     const { createOffscreenMessageHandler } = await import('../../src/offscreen-logic');
-    const handleMessage = createOffscreenMessageHandler(apis, MockMediaRecorder as unknown as typeof MediaRecorder);
+    const handleMessage = createOffscreenMessageHandler(apis, factory);
 
-    await handleMessage({ type: 'offscreen-start', streamId: 'stream-xyz' });
-
-    // Simulate MediaRecorder error event
-    if (capturedInstance?.onerror) {
-      capturedInstance.onerror({ error: new Error('Encoding error') });
-    }
+    await handleMessage({ type: 'offscreen-start', streamId: 'test-stream-id' });
+    await handleMessage({ type: 'offscreen-stop' });
 
     expect(apis.sendMessage).toHaveBeenCalledWith({
       type: 'offscreen-error',
-      error: 'Encoding error',
+      error: 'Encoding failed',
     });
   });
 
-  it('stops all stream tracks when recording stops', async () => {
+  it('does not stop stream tracks when recording stops (deferred to offscreen doc closure)', async () => {
     const apis = createMockMediaAPIs();
     const mockStream = createMockStream();
     apis.getUserMedia.mockResolvedValue(mockStream);
-    apis.isTypeSupported.mockReturnValue(true);
-    apis.createObjectURL.mockReturnValue('blob://test-url');
 
-    const { MockMediaRecorder } = createMockMediaRecorderClass();
+    const { factory } = createMockRecorderFactory();
 
     const { createOffscreenMessageHandler } = await import('../../src/offscreen-logic');
-    const handleMessage = createOffscreenMessageHandler(apis, MockMediaRecorder as unknown as typeof MediaRecorder);
+    const handleMessage = createOffscreenMessageHandler(apis, factory);
 
-    await handleMessage({ type: 'offscreen-start', streamId: 'stream-xyz' });
+    await handleMessage({ type: 'offscreen-start', streamId: 'test-stream-id' });
     await handleMessage({ type: 'offscreen-stop' });
 
+    // Tracks must NOT be stopped here -- Chrome auto-closes offscreen docs
+    // when USER_MEDIA has no active tracks, invalidating blob URLs.
+    // Cleanup happens when the service worker calls closeOffscreenDocument().
     const tracks = mockStream.getTracks();
     for (const track of tracks) {
-      expect(track.stop).toHaveBeenCalled();
+      expect(track.stop).not.toHaveBeenCalled();
     }
   });
 
-  it('converts WebM blob to mp4 before sending result when recording stops', async () => {
+  it('does not stop stream tracks even when recorder session fails (deferred to doc closure)', async () => {
     const apis = createMockMediaAPIs();
     const mockStream = createMockStream();
     apis.getUserMedia.mockResolvedValue(mockStream);
-    apis.isTypeSupported.mockReturnValue(true);
-    apis.createObjectURL.mockReturnValue('blob://mp4-url');
 
-    const { MockMediaRecorder } = createMockMediaRecorderClass();
-
-    // Stub mp4 converter: takes a WebM blob, returns an mp4 blob
-    const mp4Blob = new Blob(['fake-mp4-data'], { type: 'video/mp4' });
-    const convertToMp4 = vi.fn<(blob: Blob) => Promise<Blob>>().mockResolvedValue(mp4Blob);
+    const stopFn = vi.fn<() => Promise<Blob>>().mockRejectedValue(new Error('Encoding failed'));
+    const factory = vi.fn().mockReturnValue({ stop: stopFn });
 
     const { createOffscreenMessageHandler } = await import('../../src/offscreen-logic');
-    const handleMessage = createOffscreenMessageHandler(apis, MockMediaRecorder as unknown as typeof MediaRecorder, convertToMp4);
+    const handleMessage = createOffscreenMessageHandler(apis, factory);
 
-    // Start then stop recording
-    await handleMessage({ type: 'offscreen-start', streamId: 'stream-xyz' });
+    await handleMessage({ type: 'offscreen-start', streamId: 'test-stream-id' });
     await handleMessage({ type: 'offscreen-stop' });
 
-    // The converter should have been called with the assembled WebM blob
-    expect(convertToMp4).toHaveBeenCalledOnce();
-    const calledWithBlob = convertToMp4.mock.calls[0]![0];
-    expect(calledWithBlob).toBeInstanceOf(Blob);
-    expect(calledWithBlob.type).toBe('video/webm');
-
-    // The result should report mp4 format
-    expect(apis.sendMessage).toHaveBeenCalledWith({
-      type: 'offscreen-result',
-      blobUrl: 'blob://mp4-url',
-      format: 'mp4',
-    });
-
-    // createObjectURL should have been called with the mp4 blob, not the webm blob
-    expect(apis.createObjectURL).toHaveBeenCalledWith(mp4Blob);
+    // Same as above -- tracks are NOT stopped in handleStop.
+    const tracks = mockStream.getTracks();
+    for (const track of tracks) {
+      expect(track.stop).not.toHaveBeenCalled();
+    }
   });
 
-  it('ignores offscreen-stop when not recording', async () => {
+  it('sends error when offscreen-stop received without active session', async () => {
     const apis = createMockMediaAPIs();
-    apis.isTypeSupported.mockReturnValue(true);
-
-    const { MockMediaRecorder } = createMockMediaRecorderClass();
+    const { factory } = createMockRecorderFactory();
 
     const { createOffscreenMessageHandler } = await import('../../src/offscreen-logic');
-    const handleMessage = createOffscreenMessageHandler(apis, MockMediaRecorder as unknown as typeof MediaRecorder);
+    const handleMessage = createOffscreenMessageHandler(apis, factory);
 
-    // Stop without start -- should not throw or send anything
     await handleMessage({ type: 'offscreen-stop' });
 
-    expect(apis.sendMessage).not.toHaveBeenCalled();
+    expect(apis.sendMessage).toHaveBeenCalledWith({
+      type: 'offscreen-error',
+      error: 'No active recording session',
+    });
+  });
+
+  it('ignores duplicate offscreen-start when session already active', async () => {
+    const apis = createMockMediaAPIs();
+    const mockStream = createMockStream();
+    apis.getUserMedia.mockResolvedValue(mockStream);
+
+    const { factory } = createMockRecorderFactory();
+
+    const { createOffscreenMessageHandler } = await import('../../src/offscreen-logic');
+    const handleMessage = createOffscreenMessageHandler(apis, factory);
+
+    await handleMessage({ type: 'offscreen-start', streamId: 'test-stream-id' });
+    await handleMessage({ type: 'offscreen-start', streamId: 'test-stream-id-2' });
+
+    // getUserMedia should only be called once
+    expect(apis.getUserMedia).toHaveBeenCalledOnce();
+    expect(factory).toHaveBeenCalledOnce();
   });
 });
