@@ -52,9 +52,20 @@ describe('offscreen-logic', () => {
   });
 
   describe('buildResultMessage', () => {
-    it('creates offscreen-result message from blob URL', async () => {
+    it('creates offscreen-result message with mp4 format from blob URL', async () => {
       const { buildResultMessage } = await import('../../src/offscreen-logic');
-      const message = buildResultMessage('blob://recording-123');
+      const message = buildResultMessage('blob://recording-123', 'mp4');
+
+      expect(message).toEqual({
+        type: 'offscreen-result',
+        blobUrl: 'blob://recording-123',
+        format: 'mp4',
+      });
+    });
+
+    it('creates offscreen-result message with webm format when specified', async () => {
+      const { buildResultMessage } = await import('../../src/offscreen-logic');
+      const message = buildResultMessage('blob://recording-123', 'webm');
 
       expect(message).toEqual({
         type: 'offscreen-result',
@@ -291,6 +302,43 @@ describe('offscreen wiring', () => {
     for (const track of tracks) {
       expect(track.stop).toHaveBeenCalled();
     }
+  });
+
+  it('converts WebM blob to mp4 before sending result when recording stops', async () => {
+    const apis = createMockMediaAPIs();
+    const mockStream = createMockStream();
+    apis.getUserMedia.mockResolvedValue(mockStream);
+    apis.isTypeSupported.mockReturnValue(true);
+    apis.createObjectURL.mockReturnValue('blob://mp4-url');
+
+    const { MockMediaRecorder } = createMockMediaRecorderClass();
+
+    // Stub mp4 converter: takes a WebM blob, returns an mp4 blob
+    const mp4Blob = new Blob(['fake-mp4-data'], { type: 'video/mp4' });
+    const convertToMp4 = vi.fn<(blob: Blob) => Promise<Blob>>().mockResolvedValue(mp4Blob);
+
+    const { createOffscreenMessageHandler } = await import('../../src/offscreen-logic');
+    const handleMessage = createOffscreenMessageHandler(apis, MockMediaRecorder as unknown as typeof MediaRecorder, convertToMp4);
+
+    // Start then stop recording
+    await handleMessage({ type: 'offscreen-start', streamId: 'stream-xyz' });
+    await handleMessage({ type: 'offscreen-stop' });
+
+    // The converter should have been called with the assembled WebM blob
+    expect(convertToMp4).toHaveBeenCalledOnce();
+    const calledWithBlob = convertToMp4.mock.calls[0]![0];
+    expect(calledWithBlob).toBeInstanceOf(Blob);
+    expect(calledWithBlob.type).toBe('video/webm');
+
+    // The result should report mp4 format
+    expect(apis.sendMessage).toHaveBeenCalledWith({
+      type: 'offscreen-result',
+      blobUrl: 'blob://mp4-url',
+      format: 'mp4',
+    });
+
+    // createObjectURL should have been called with the mp4 blob, not the webm blob
+    expect(apis.createObjectURL).toHaveBeenCalledWith(mp4Blob);
   });
 
   it('ignores offscreen-stop when not recording', async () => {

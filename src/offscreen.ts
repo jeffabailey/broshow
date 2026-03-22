@@ -8,6 +8,7 @@
 import type { SWToOffscreen } from './types';
 import { createOffscreenMessageHandler } from './offscreen-logic';
 import type { MediaAPIs } from './offscreen-logic';
+import { convertWebmToMp4 } from './mp4';
 
 // --- Browser API adapters --------------------------------------------------
 
@@ -27,7 +28,7 @@ const mediaAPIs: MediaAPIs = {
 
 // --- Message listener ------------------------------------------------------
 
-const handleMessage = createOffscreenMessageHandler(mediaAPIs, MediaRecorder);
+const handleMessage = createOffscreenMessageHandler(mediaAPIs, MediaRecorder, convertWebmToMp4);
 
 chrome.runtime.onMessage.addListener(
   (message: SWToOffscreen, _sender, _sendResponse) => {

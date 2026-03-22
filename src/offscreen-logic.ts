@@ -53,10 +53,10 @@ export const assembleBlob = (chunks: readonly Blob[]): Blob =>
 
 // --- Message builders ------------------------------------------------------
 
-export const buildResultMessage = (blobUrl: string): OffscreenToSW => ({
+export const buildResultMessage = (blobUrl: string, format: 'mp4' | 'webm'): OffscreenToSW => ({
   type: 'offscreen-result',
   blobUrl,
-  format: 'webm',
+  format,
 });
 
 export const buildErrorMessage = (error: string): OffscreenToSW => ({
@@ -73,11 +73,16 @@ export type MediaAPIs = {
   readonly sendMessage: (message: OffscreenToSW) => void;
 };
 
+// --- Mp4 conversion port type ----------------------------------------------
+
+export type ConvertToMp4 = (webmBlob: Blob) => Promise<Blob>;
+
 // --- Effectful message handler (wired at boundary) -------------------------
 
 export const createOffscreenMessageHandler = (
   apis: MediaAPIs,
   MediaRecorderClass: typeof MediaRecorder,
+  convertToMp4?: ConvertToMp4,
 ) => {
   let recorder: MediaRecorder | null = null;
   let stream: MediaStream | null = null;
@@ -117,26 +122,41 @@ export const createOffscreenMessageHandler = (
     }
 
     // Wrap stop in a promise to wait for onstop event
-    await new Promise<void>((resolve) => {
+    await new Promise<void>((resolve, reject) => {
       if (!recorder) {
         resolve();
         return;
       }
 
       recorder.onstop = () => {
-        const blob = assembleBlob(chunks);
-        const blobUrl = apis.createObjectURL(blob);
-        apis.sendMessage(buildResultMessage(blobUrl));
+        const webmBlob = assembleBlob(chunks);
 
-        // Clean up stream tracks
-        if (stream) {
-          stream.getTracks().forEach((track) => track.stop());
-        }
+        const processBlob = async (): Promise<void> => {
+          let finalBlob: Blob;
+          let format: 'mp4' | 'webm';
 
-        recorder = null;
-        stream = null;
-        chunks = [];
-        resolve();
+          if (convertToMp4) {
+            finalBlob = await convertToMp4(webmBlob);
+            format = 'mp4';
+          } else {
+            finalBlob = webmBlob;
+            format = 'webm';
+          }
+
+          const blobUrl = apis.createObjectURL(finalBlob);
+          apis.sendMessage(buildResultMessage(blobUrl, format));
+
+          // Clean up stream tracks
+          if (stream) {
+            stream.getTracks().forEach((track) => track.stop());
+          }
+
+          recorder = null;
+          stream = null;
+          chunks = [];
+        };
+
+        processBlob().then(resolve).catch(reject);
       };
 
       recorder.stop();
