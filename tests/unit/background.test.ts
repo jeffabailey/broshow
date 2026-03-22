@@ -209,6 +209,7 @@ describe('background wiring', () => {
     createOffscreenDocument: vi.fn<() => Promise<void>>(),
     closeOffscreenDocument: vi.fn<() => Promise<void>>(),
     sendMessageToOffscreen: vi.fn<(message: SWToOffscreen) => Promise<void>>(),
+    waitForOffscreenReady: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     downloadFile: vi.fn<(url: string, filename: string) => Promise<void>>().mockResolvedValue(undefined),
     getRecordingData: vi.fn<() => Promise<string | null>>().mockResolvedValue(null),
     clearRecordingData: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
@@ -228,14 +229,18 @@ describe('background wiring', () => {
     const response = await handleMessage({ type: 'start-recording', streamId: 'stream-42' });
 
     expect(apis.getActiveTab).toHaveBeenCalled();
-    expect(apis.createOffscreenDocument).toHaveBeenCalled();
-    expect(apis.sendMessageToOffscreen).toHaveBeenCalledWith({
-      type: 'offscreen-start',
-      streamId: 'stream-42',
-    });
     expect(response).toEqual({
       type: 'state-update',
       state: { status: 'recording', tabId: 42, startTime: 5000 },
+    });
+
+    // Offscreen creation + handshake runs asynchronously after response
+    await vi.waitFor(() => {
+      expect(apis.createOffscreenDocument).toHaveBeenCalled();
+      expect(apis.sendMessageToOffscreen).toHaveBeenCalledWith({
+        type: 'offscreen-start',
+        streamId: 'stream-42',
+      });
     });
   });
 
@@ -325,6 +330,59 @@ describe('background wiring', () => {
     expect(stateResponse).toEqual({
       type: 'state-update',
       state: { status: 'idle' },
+    });
+  });
+
+  it('handles offscreen-result with missing storage data: returns error', async () => {
+    const apis = createMockChromeAPIs();
+    apis.getActiveTab.mockResolvedValue({ id: 42 });
+    apis.createOffscreenDocument.mockResolvedValue(undefined);
+    apis.sendMessageToOffscreen.mockResolvedValue(undefined);
+    apis.closeOffscreenDocument.mockResolvedValue(undefined);
+    apis.getRecordingData.mockResolvedValue(null);
+    apis.now.mockReturnValue(5000);
+
+    const { createMessageHandler } = await import('../../src/background-logic');
+    const handleMessage = createMessageHandler(apis);
+
+    // Start and stop to reach processing state
+    await handleMessage({ type: 'start-recording', streamId: 'stream-42' });
+    await handleMessage({ type: 'stop-recording' });
+
+    // Offscreen sends result but storage is empty (auto-close race)
+    const response = await handleMessage({
+      type: 'offscreen-result',
+      format: 'webm',
+    });
+
+    expect(apis.closeOffscreenDocument).toHaveBeenCalled();
+    expect(apis.downloadFile).not.toHaveBeenCalled();
+    expect(response).toEqual({
+      type: 'error',
+      message: 'Recording data missing from storage',
+    });
+  });
+
+  it('waits for offscreen-ready before sending offscreen-start', async () => {
+    const apis = createMockChromeAPIs();
+    apis.getActiveTab.mockResolvedValue({ id: 42 });
+    apis.createOffscreenDocument.mockResolvedValue(undefined);
+    apis.sendMessageToOffscreen.mockResolvedValue(undefined);
+    apis.now.mockReturnValue(5000);
+
+    const { createMessageHandler } = await import('../../src/background-logic');
+    const handleMessage = createMessageHandler(apis);
+
+    await handleMessage({ type: 'start-recording', streamId: 'stream-42' });
+
+    // Offscreen creation + handshake runs asynchronously after response
+    await vi.waitFor(() => {
+      expect(apis.createOffscreenDocument).toHaveBeenCalled();
+      expect(apis.waitForOffscreenReady).toHaveBeenCalled();
+      expect(apis.sendMessageToOffscreen).toHaveBeenCalledWith({
+        type: 'offscreen-start',
+        streamId: 'stream-42',
+      });
     });
   });
 

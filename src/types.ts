@@ -38,6 +38,7 @@ export type SWToOffscreen =
 // --- Offscreen -> Service Worker messages ---------------------------------
 
 export type OffscreenToSW =
+  | { readonly type: 'offscreen-ready' }
   | { readonly type: 'offscreen-result'; readonly format: 'mp4' | 'webm' }
   | { readonly type: 'offscreen-error'; readonly error: string };
 

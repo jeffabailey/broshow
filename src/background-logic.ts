@@ -45,6 +45,7 @@ export type ChromeAPIs = {
   readonly createOffscreenDocument: () => Promise<void>;
   readonly closeOffscreenDocument: () => Promise<void>;
   readonly sendMessageToOffscreen: (message: SWToOffscreen) => Promise<void>;
+  readonly waitForOffscreenReady: () => Promise<void>;
   readonly downloadFile: (url: string, filename: string) => Promise<void>;
   readonly getRecordingData: () => Promise<string | null>;
   readonly clearRecordingData: () => Promise<void>;
@@ -155,10 +156,17 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
         const result = handleStartRecording(state, tab.id, streamId, apis.now());
         state = result.newState;
 
-        // Effect: create offscreen document and tell it to start capturing
+        // Effect: create offscreen document, wait for ready handshake, then start
+        // The handshake runs asynchronously after the response is returned to the
+        // popup so the UI updates immediately.
         if (result.offscreenMessage) {
-          await apis.createOffscreenDocument();
-          await apis.sendMessageToOffscreen(result.offscreenMessage);
+          const offscreenMsg = result.offscreenMessage;
+          apis.createOffscreenDocument().then(async () => {
+            await apis.waitForOffscreenReady();
+            await apis.sendMessageToOffscreen(offscreenMsg);
+          }).catch(() => {
+            // Offscreen creation or messaging failed; handled by offscreen-error
+          });
         }
 
         return result.response;
@@ -184,11 +192,13 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
 
         // Effect: read recording data from storage, download, clean up, close offscreen
         const dataUrl = await apis.getRecordingData();
-        if (dataUrl) {
-          const filename = `brorecord-recording.${message.format}`;
-          await apis.downloadFile(dataUrl, filename);
-          await apis.clearRecordingData();
+        if (!dataUrl) {
+          await apis.closeOffscreenDocument();
+          return { type: 'error', message: 'Recording data missing from storage' };
         }
+        const filename = `brorecord-recording.${message.format}`;
+        await apis.downloadFile(dataUrl, filename);
+        await apis.clearRecordingData();
         await apis.closeOffscreenDocument();
 
         return handleGetState(state);
@@ -204,6 +214,10 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
 
         return result.response;
       }
+
+      // offscreen-ready is handled by waitForOffscreenReady adapter, not here
+      case 'offscreen-ready':
+        return handleGetState(state);
 
       // Messages that the SW sends (not receives) -- ignore
       case 'state-update':

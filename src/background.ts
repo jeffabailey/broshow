@@ -36,6 +36,22 @@ const chromeAPIs: ChromeAPIs = {
   sendMessageToOffscreen: (message: SWToOffscreen) =>
     chrome.runtime.sendMessage(message),
 
+  waitForOffscreenReady: () =>
+    new Promise<void>((resolve) => {
+      const listener = (message: { type: string }) => {
+        if (message.type === 'offscreen-ready') {
+          chrome.runtime.onMessage.removeListener(listener);
+          resolve();
+        }
+      };
+      chrome.runtime.onMessage.addListener(listener);
+      // Timeout after 10 seconds to avoid hanging forever
+      setTimeout(() => {
+        chrome.runtime.onMessage.removeListener(listener);
+        resolve();
+      }, 10000);
+    }),
+
   downloadFile: async (url: string, filename: string) => {
     console.log('[sw] downloadFile called:', url.slice(0, 80), filename);
     await chrome.downloads.download({ url, filename });

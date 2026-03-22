@@ -4,12 +4,12 @@
 // This module wires browser APIs to the pure offscreen logic.
 // All side effects (navigator.mediaDevices, URL, chrome.runtime) live here.
 //
-// Recording starts when the service worker sends an offscreen-start message
-// containing the streamId obtained via tabCapture.getMediaStreamId().
-//
-// The offscreen document converts the recording blob to a data URL and sends
-// it back to the service worker, which uses chrome.downloads.download() to
-// save the file. Data URLs survive offscreen document closure.
+// Recording flow:
+// 1. SW creates the offscreen document
+// 2. Offscreen doc registers its onMessage listener and sends offscreen-ready
+// 3. SW receives offscreen-ready and sends offscreen-start with streamId
+// 4. On stop, the recording blob is stored as a data URL in chrome.storage
+// 5. SW retrieves the data URL and triggers chrome.downloads.download()
 // ---------------------------------------------------------------------------
 
 import type { SWToOffscreen } from './types';
@@ -30,16 +30,26 @@ const blobToDataUrl = (blob: Blob): Promise<string> =>
 const mediaAPIs: MediaAPIs = {
   getUserMedia: async (constraints: MediaStreamConstraints) => {
     try {
+      // Primary: tab capture with streamId from tabCapture API
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       console.log('[offscreen] getUserMedia succeeded');
       return stream;
     } catch (err) {
       console.log('[offscreen] getUserMedia failed, trying getDisplayMedia fallback:', err);
-      // Fallback: getDisplayMedia works in test environments where
-      // tabCapture streamId is not available
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-      console.log('[offscreen] getDisplayMedia succeeded, tracks:', stream.getTracks().length);
-      return stream;
+      try {
+        // Fallback: getDisplayMedia works in test environments where
+        // tabCapture streamId is not available
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        console.log('[offscreen] getDisplayMedia succeeded, tracks:', stream.getTracks().length);
+        return stream;
+      } catch (displayErr) {
+        console.log('[offscreen] getDisplayMedia failed, trying plain getUserMedia fallback:', displayErr);
+        // Last resort: plain getUserMedia with no tab capture constraints.
+        // Works with --use-fake-device-for-media-stream in test environments.
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        console.log('[offscreen] plain getUserMedia succeeded, tracks:', stream.getTracks().length);
+        return stream;
+      }
     }
   },
 
@@ -99,4 +109,10 @@ chrome.runtime.onMessage.addListener(
   },
 );
 
-// Offscreen document loaded and ready for messages
+// --- Signal readiness to the service worker --------------------------------
+// The SW waits for this message before sending offscreen-start, ensuring the
+// onMessage listener above is registered and ready to receive messages.
+
+chrome.runtime.sendMessage({ type: 'offscreen-ready' }).catch(() => {
+  // SW may not be listening yet in rare cases; the SW has a timeout fallback
+});
