@@ -1,77 +1,276 @@
 // ---------------------------------------------------------------------------
-// Mp4 muxing wrapper -- pure function, no side effects
+// MP4 recording session -- records MediaStream as MP4 via WebCodecs + mp4-muxer
 // ---------------------------------------------------------------------------
-// Wraps the mp4-muxer library to convert raw video data (from a WebM blob)
-// into an mp4 container. This is the pure core; browser APIs stay at the edge.
+// Uses VideoEncoder (H.264) and AudioEncoder (AAC) with mp4-muxer to produce
+// MP4 directly. Falls back to MediaRecorder (WebM) when WebCodecs is unavailable
+// or fails to produce output (e.g. fake media devices in test environments).
+//
+// Both pipelines may run on the same stream, but stop sequencing ensures
+// MediaRecorder completes BEFORE WebCodecs readers are cancelled, preventing
+// interference.
+//
+// This is an effectful module (uses browser APIs); the pure logic boundary
+// is in offscreen-logic.ts which injects this via a port type.
 // ---------------------------------------------------------------------------
 
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
+import type { RecorderSession, CreateRecorder } from './offscreen-logic';
 
-// --- Configuration constants ------------------------------------------------
+// --- WebCodecs MP4 session --------------------------------------------------
 
-const DEFAULT_VIDEO_WIDTH = 1920;
-const DEFAULT_VIDEO_HEIGHT = 1080;
-const DEFAULT_FRAME_DURATION_MICROSECONDS = 33333; // ~30fps
+type WebCodecsHandle = {
+  readonly hasOutput: () => boolean;
+  readonly finalize: () => Blob;
+  readonly cleanup: () => Promise<void>;
+};
 
-// --- Minimal AVC decoder configuration -------------------------------------
-// A minimal AVCDecoderConfigurationRecord is required by mp4-muxer to produce
-// a valid avcC box. This record describes the codec parameters (SPS/PPS).
-// The minimal record below uses Baseline profile, level 3.0 with a single
-// trivial SPS and PPS NALU, sufficient to produce a structurally valid mp4.
+const createWebCodecsPipeline = (stream: MediaStream): WebCodecsHandle => {
+  const videoTrack = stream.getVideoTracks()[0];
+  const audioTrack = stream.getAudioTracks()[0];
 
-const buildMinimalAvcDecoderConfig = (): Uint8Array =>
-  new Uint8Array([
-    0x01,       // configurationVersion
-    0x42,       // AVCProfileIndication (Baseline)
-    0x00,       // profile_compatibility
-    0x1e,       // AVCLevelIndication (3.0)
-    0xff,       // lengthSizeMinusOne = 3 (4 bytes NALU length) | reserved bits
-    0xe1,       // numOfSequenceParameterSets = 1 | reserved bits
-    0x00, 0x04, // SPS length = 4
-    0x67, 0x42, 0x00, 0x1e, // minimal SPS NALU
-    0x01,       // numOfPictureParameterSets = 1
-    0x00, 0x01, // PPS length = 1
-    0x68,       // minimal PPS NALU
-  ]);
+  if (!videoTrack) {
+    throw new Error('No video track in stream');
+  }
 
-// --- Public API -------------------------------------------------------------
-
-/**
- * Converts a WebM blob into an mp4 blob by wrapping the raw video data
- * in an mp4 container using mp4-muxer.
- *
- * This is a pure function: no browser API calls, no side effects.
- * The blob is read as raw bytes and muxed into an mp4 ftyp-based container.
- */
-export const convertWebmToMp4 = async (webmBlob: Blob): Promise<Blob> => {
-  const rawBytes = new Uint8Array(await webmBlob.arrayBuffer());
-
-  const target = new ArrayBufferTarget();
+  const settings = videoTrack.getSettings();
+  const width = settings.width ?? 1280;
+  const height = settings.height ?? 720;
+  const frameRate = settings.frameRate ?? 30;
 
   const muxer = new Muxer({
-    target,
-    video: {
-      codec: 'avc',
-      width: DEFAULT_VIDEO_WIDTH,
-      height: DEFAULT_VIDEO_HEIGHT,
-    },
+    target: new ArrayBufferTarget(),
+    video: { codec: 'avc', width, height },
+    ...(audioTrack ? {
+      audio: { codec: 'aac', numberOfChannels: 1, sampleRate: 48000 },
+    } : {}),
     fastStart: 'in-memory',
     firstTimestampBehavior: 'offset',
   });
 
-  const decoderConfig = {
-    description: buildMinimalAvcDecoderConfig().buffer,
+  let hasDecoderConfig = false;
+
+  const videoEncoder = new VideoEncoder({
+    output: (chunk, meta) => {
+      if (meta?.decoderConfig) hasDecoderConfig = true;
+      muxer.addVideoChunk(chunk, meta?.decoderConfig ? meta : undefined);
+    },
+    error: (e) => console.error('[mp4] VideoEncoder error:', e),
+  });
+
+  videoEncoder.configure({
+    codec: 'avc1.42001f', // Baseline profile, level 3.1
+    width,
+    height,
+    bitrate: 2_500_000,
+    framerate: frameRate,
+  });
+
+  let audioEncoder: AudioEncoder | null = null;
+  let audioReader: ReadableStreamDefaultReader<AudioData> | null = null;
+  let audioProcessor: Promise<void> | null = null;
+
+  if (audioTrack) {
+    audioEncoder = new AudioEncoder({
+      output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+      error: (e) => console.error('[mp4] AudioEncoder error:', e),
+    });
+
+    audioEncoder.configure({
+      codec: 'mp4a.40.2', // AAC-LC
+      numberOfChannels: 1,
+      sampleRate: 48000,
+      bitrate: 128_000,
+    });
+
+    audioReader = new MediaStreamTrackProcessor({ track: audioTrack }).readable.getReader();
+    audioProcessor = (async () => {
+      try {
+        while (true) {
+          const { done, value } = await audioReader!.read();
+          if (done) break;
+          if (audioEncoder!.state === 'configured') {
+            audioEncoder!.encode(value);
+          }
+          value.close();
+        }
+      } catch {
+        // Reader cancelled during cleanup
+      }
+    })();
+  }
+
+  const videoReader = new MediaStreamTrackProcessor({ track: videoTrack }).readable.getReader();
+  let frameCount = 0;
+  const videoProcessor = (async () => {
+    try {
+      while (true) {
+        const { done, value } = await videoReader.read();
+        if (done) break;
+        if (videoEncoder.state === 'configured') {
+          const keyFrame = frameCount % (frameRate * 2) === 0;
+          videoEncoder.encode(value, { keyFrame });
+          frameCount++;
+        }
+        value.close();
+      }
+    } catch {
+      // Reader cancelled during cleanup
+    }
+  })();
+
+  const closeEncoder = (enc: VideoEncoder | AudioEncoder) => {
+    try { if (enc.state !== 'closed') enc.close(); } catch { /* already closed */ }
   };
 
-  muxer.addVideoChunkRaw(
-    rawBytes,
-    'key',
-    0,
-    DEFAULT_FRAME_DURATION_MICROSECONDS,
-    { decoderConfig } as EncodedVideoChunkMetadata,
-  );
+  return {
+    hasOutput: () => hasDecoderConfig,
 
-  muxer.finalize();
+    finalize: () => {
+      if (!hasDecoderConfig) throw new Error('No decoderConfig from encoder');
+      muxer.finalize();
+      const { buffer } = muxer.target as ArrayBufferTarget;
+      closeEncoder(videoEncoder);
+      if (audioEncoder) closeEncoder(audioEncoder);
+      return new Blob([buffer], { type: 'video/mp4' });
+    },
 
-  return new Blob([target.buffer], { type: 'video/mp4' });
+    cleanup: async () => {
+      // Cancel readers and wait for processor loops to exit
+      await videoReader.cancel();
+      if (audioReader) await audioReader.cancel();
+      await videoProcessor;
+      if (audioProcessor) await audioProcessor;
+
+      // Flush remaining buffered frames
+      const flushEncoder = async (enc: VideoEncoder | AudioEncoder) => {
+        try { if (enc.state === 'configured') await enc.flush(); } catch { /* encoder errored */ }
+      };
+      await flushEncoder(videoEncoder);
+      if (audioEncoder) await flushEncoder(audioEncoder);
+
+      closeEncoder(videoEncoder);
+      if (audioEncoder) closeEncoder(audioEncoder);
+    },
+  };
+};
+
+// --- MediaRecorder WebM session ---------------------------------------------
+
+/** Timeout (ms) for MediaRecorder.stop() to fire onstop event. */
+const MEDIA_RECORDER_STOP_TIMEOUT_MS = 10_000;
+
+const createMediaRecorderSession = (stream: MediaStream): RecorderSession => {
+  const mimeTypes = [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm',
+  ];
+  const mimeType = mimeTypes.find((t) => MediaRecorder.isTypeSupported(t)) ?? '';
+  const chunks: Blob[] = [];
+
+  const recorder = new MediaRecorder(stream, {
+    ...(mimeType ? { mimeType } : {}),
+  });
+
+  recorder.ondataavailable = (event: BlobEvent) => {
+    if (event.data.size > 0) {
+      chunks.push(event.data);
+    }
+  };
+
+  recorder.start(1000);
+
+  return {
+    stop: () =>
+      new Promise<Blob>((resolve, reject) => {
+        const simpleMime = (mimeType || 'video/webm').split(';')[0];
+        const timeoutId = setTimeout(() => {
+          console.log('[mp4] MediaRecorder.stop() timed out, resolving with collected chunks');
+          resolve(new Blob(chunks, { type: simpleMime }));
+        }, MEDIA_RECORDER_STOP_TIMEOUT_MS);
+
+        recorder.onstop = () => {
+          clearTimeout(timeoutId);
+          // Use simple MIME type without codec params — commas in
+          // "codecs=vp8,opus" break data URL parsing downstream.
+          const simpleMime = (mimeType || 'video/webm').split(';')[0];
+          resolve(new Blob(chunks, { type: simpleMime }));
+        };
+        recorder.onerror = (event) => {
+          clearTimeout(timeoutId);
+          reject(new Error(`MediaRecorder error: ${event}`));
+        };
+        try {
+          if (recorder.state === 'inactive') {
+            clearTimeout(timeoutId);
+            resolve(new Blob(chunks, { type: simpleMime }));
+          } else {
+            recorder.stop();
+          }
+        } catch (error) {
+          clearTimeout(timeoutId);
+          reject(error);
+        }
+      }),
+  };
+};
+
+// --- Session factory --------------------------------------------------------
+// Both pipelines run on the same stream. On stop:
+// 1. Stop MediaRecorder FIRST (get WebM blob before any reader cancellation)
+// 2. Check if WebCodecs produced output (hasDecoderConfig)
+// 3. If yes: cleanup WebCodecs, finalize MP4, return MP4
+// 4. If no: cleanup WebCodecs (cancel readers), return WebM from step 1
+//
+// This sequencing ensures reader cancellation never interferes with MediaRecorder.
+
+export const createRecordingSession: CreateRecorder = (
+  stream: MediaStream,
+): RecorderSession => {
+  // Always start MediaRecorder (reliable WebM fallback)
+  const webmSession = createMediaRecorderSession(stream);
+
+  // Try WebCodecs for MP4 output
+  let webcodecs: WebCodecsHandle | null = null;
+  if (typeof VideoEncoder !== 'undefined' && typeof MediaStreamTrackProcessor !== 'undefined') {
+    try {
+      console.log('[mp4] Starting WebCodecs + mp4-muxer pipeline (with MediaRecorder fallback)');
+      webcodecs = createWebCodecsPipeline(stream);
+    } catch (e) {
+      console.log('[mp4] WebCodecs setup failed, using MediaRecorder only:', e);
+    }
+  } else {
+    console.log('[mp4] WebCodecs unavailable, using MediaRecorder (WebM output)');
+  }
+
+  return {
+    stop: async () => {
+      // 1. Stop MediaRecorder FIRST — before any reader cancellation
+      const webmBlob = await webmSession.stop();
+      console.log('[mp4] MediaRecorder stopped, blob size:', webmBlob.size);
+
+      if (!webcodecs) {
+        return webmBlob;
+      }
+
+      // 2. Cleanup WebCodecs (cancel readers, flush encoders)
+      await webcodecs.cleanup();
+
+      // 3. Try to finalize MP4
+      if (webcodecs.hasOutput()) {
+        try {
+          const mp4Blob = webcodecs.finalize();
+          console.log('[mp4] MP4 finalized successfully, size:', mp4Blob.size);
+          return mp4Blob;
+        } catch (e) {
+          console.log('[mp4] MP4 finalization failed, using WebM fallback:', e);
+          return webmBlob;
+        }
+      }
+
+      // 4. WebCodecs produced no output — use WebM
+      console.log('[mp4] WebCodecs produced no output (no decoderConfig), using WebM fallback');
+      return webmBlob;
+    },
+  };
 };

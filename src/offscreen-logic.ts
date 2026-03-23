@@ -21,9 +21,10 @@ export const buildMediaConstraints = (streamId: string): MediaStreamConstraints 
 
 // --- Message builders ------------------------------------------------------
 
-export const buildResultMessage = (format: 'mp4' | 'webm'): OffscreenToSW => ({
+export const buildResultMessage = (format: 'mp4' | 'webm', dataUrl?: string): OffscreenToSW => ({
   type: 'offscreen-result',
   format,
+  ...(dataUrl ? { dataUrl } : {}),
 });
 
 export const buildErrorMessage = (error: string): OffscreenToSW => ({
@@ -35,7 +36,8 @@ export const buildErrorMessage = (error: string): OffscreenToSW => ({
 
 export type MediaAPIs = {
   readonly getUserMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
-  readonly storeRecording: (blob: Blob) => Promise<void>;
+  readonly storeRecording: (blob: Blob) => Promise<boolean>;
+  readonly blobToDataUrl: (blob: Blob) => Promise<string>;
   readonly sendMessage: (message: OffscreenToSW) => void;
 };
 
@@ -83,8 +85,15 @@ export const createOffscreenMessageHandler = (
 
     try {
       const recordingBlob = await session.stop();
-      await apis.storeRecording(recordingBlob);
-      const resultMsg = buildResultMessage('webm');
+      const stored = await apis.storeRecording(recordingBlob);
+      // If storage succeeded, SW reads from chrome.storage.local.
+      // If not (e.g. offscreen lacks chrome.storage), include data URL in message.
+      let dataUrl: string | undefined;
+      if (!stored) {
+        dataUrl = await apis.blobToDataUrl(recordingBlob);
+      }
+      const format = recordingBlob.type.includes('mp4') ? 'mp4' as const : 'webm' as const;
+      const resultMsg = buildResultMessage(format, dataUrl);
       apis.sendMessage(resultMsg);
       return resultMsg;
     } catch (error: unknown) {

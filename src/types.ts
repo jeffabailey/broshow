@@ -39,7 +39,7 @@ export type SWToOffscreen =
 
 export type OffscreenToSW =
   | { readonly type: 'offscreen-ready' }
-  | { readonly type: 'offscreen-result'; readonly format: 'mp4' | 'webm' }
+  | { readonly type: 'offscreen-result'; readonly format: 'mp4' | 'webm'; readonly dataUrl?: string }
   | { readonly type: 'offscreen-error'; readonly error: string };
 
 // --- Unified Message type -------------------------------------------------

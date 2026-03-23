@@ -20,9 +20,11 @@ export type UIDescription = {
   readonly buttonDisabled: boolean;
 };
 
-// --- Port type for sending messages ----------------------------------------
+// --- Port types for injected dependencies ----------------------------------
 
 type SendMessage = (message: PopupToSW) => Promise<SWToPopup>;
+type GetStreamId = () => Promise<string>;
+type OnMessage = (handler: (message: SWToPopup) => void) => void;
 
 // --- Minimal element interfaces for testability ----------------------------
 
@@ -65,11 +67,12 @@ export const describeUI = (state: RecordingState): UIDescription => {
   }
 };
 
-/** Map a PopupAction to the corresponding message for the service worker. */
-export const messageForAction = (action: PopupAction): PopupToSW => {
+/** Map a PopupAction to the corresponding message for the service worker.
+ *  The 'start' action requires a streamId obtained from tabCapture. */
+export const messageForAction = (action: PopupAction, streamId?: string): PopupToSW => {
   switch (action) {
     case 'start':
-      return { type: 'start-recording' };
+      return { type: 'start-recording', streamId: streamId ?? '' };
     case 'stop':
       return { type: 'stop-recording' };
   }
@@ -112,11 +115,16 @@ const handleResponse = (
 /**
  * Initialize the popup by querying state and wiring button clicks.
  * Dependencies are injected as parameters for testability.
+ *
+ * getStreamId is called when the user clicks Start -- the popup has the user
+ * gesture context required by chrome.tabCapture.getMediaStreamId().
  */
 export const initializePopup = async (
   button: ButtonElement,
   status: StatusElement,
   sendMessage: SendMessage,
+  getStreamId: GetStreamId,
+  onMessage?: OnMessage,
 ): Promise<void> => {
   // Query current state from service worker
   const response = await sendMessage({ type: 'get-state' });
@@ -126,8 +134,25 @@ export const initializePopup = async (
   button.addEventListener('click', async () => {
     if (currentAction === null) return;
 
-    const message = messageForAction(currentAction);
-    const clickResponse = await sendMessage(message);
-    currentAction = handleResponse(button, status, clickResponse);
+    try {
+      // For start action, obtain the streamId from the popup's user gesture context
+      let streamId: string | undefined;
+      if (currentAction === 'start') {
+        streamId = await getStreamId();
+      }
+
+      const message = messageForAction(currentAction, streamId);
+      const clickResponse = await sendMessage(message);
+      currentAction = handleResponse(button, status, clickResponse);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      status.textContent = `Error: ${errorMessage}`;
+    }
+  });
+
+  // Listen for pushed state updates from the service worker
+  // (e.g., when processing completes after stop-recording)
+  onMessage?.((message) => {
+    currentAction = handleResponse(button, status, message);
   });
 };

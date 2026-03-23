@@ -25,7 +25,7 @@ describe('Build output validation', () => {
     expect(manifest['manifest_version']).toBe(3);
   });
 
-  it('manifest declares tabCapture, offscreen, and downloads permissions', () => {
+  it('manifest declares offscreen and downloads permissions', () => {
     const manifest = readJsonFile(resolve(distDir, 'manifest.json')) as Record<string, unknown>;
     const permissions = manifest['permissions'] as string[];
     expect(permissions).toContain('tabCapture');

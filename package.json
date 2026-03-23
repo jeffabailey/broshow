@@ -8,14 +8,16 @@
     "build": "node esbuild.config.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:acceptance": "playwright test"
+    "test:acceptance": "playwright test",
+    "start": "npm run build && web-ext run --target chromium --source-dir dist/"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "esbuild": "^0.24.0",
-    "vitest": "^2.1.0",
     "@playwright/test": "^1.49.0",
-    "playwright": "^1.49.0"
+    "esbuild": "^0.24.0",
+    "playwright": "^1.49.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0",
+    "web-ext": "^10.0.0"
   },
   "dependencies": {
     "mp4-muxer": "^5.2.0"

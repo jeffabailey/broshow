@@ -5,17 +5,18 @@
 // All side effects (navigator.mediaDevices, URL, chrome.runtime) live here.
 //
 // Recording flow:
-// 1. SW creates the offscreen document
-// 2. Offscreen doc registers its onMessage listener and sends offscreen-ready
-// 3. SW receives offscreen-ready and sends offscreen-start with streamId
-// 4. On stop, the recording blob is stored as a data URL in chrome.storage
+// 1. SW creates the offscreen document with streamId in the URL
+// 2. Offscreen doc reads streamId from URL and auto-starts recording
+// 3. SW sends offscreen-stop when the user clicks Stop
+// 4. The recording blob is stored as a data URL in chrome.storage (or
+//    sent in the message as fallback)
 // 5. SW retrieves the data URL and triggers chrome.downloads.download()
 // ---------------------------------------------------------------------------
 
 import type { SWToOffscreen } from './types';
 import { createOffscreenMessageHandler } from './offscreen-logic';
 import type { MediaAPIs } from './offscreen-logic';
-import { createMediaRecorderSession } from './mp4';
+import { createRecordingSession } from './mp4';
 
 // --- Browser API adapters --------------------------------------------------
 
@@ -32,87 +33,91 @@ const mediaAPIs: MediaAPIs = {
     try {
       // Primary: tab capture with streamId from tabCapture API
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      console.log('[offscreen] getUserMedia succeeded');
+      console.log('[offscreen] Tab capture succeeded, tracks:', stream.getTracks().length);
       return stream;
-    } catch (err) {
-      console.log('[offscreen] getUserMedia failed, trying getDisplayMedia fallback:', err);
+    } catch (tabCaptureErr) {
+      console.warn('[offscreen] Tab capture failed, trying getDisplayMedia:', tabCaptureErr);
       try {
-        // Fallback: getDisplayMedia works in test environments where
-        // tabCapture streamId is not available
+        // Fallback 1: getDisplayMedia captures screen/tab content.
+        // Works in test environments with --auto-select-desktop-capture-source.
         const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
         console.log('[offscreen] getDisplayMedia succeeded, tracks:', stream.getTracks().length);
         return stream;
       } catch (displayErr) {
-        console.log('[offscreen] getDisplayMedia failed, trying plain getUserMedia fallback:', displayErr);
-        // Last resort: plain getUserMedia with no tab capture constraints.
-        // Works with --use-fake-device-for-media-stream in test environments.
+        console.warn('[offscreen] getDisplayMedia failed, trying plain getUserMedia:', displayErr);
+        // Fallback 2: plain getUserMedia with fake device for test environments.
+        // In production this captures camera/mic -- not tab content.
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        console.log('[offscreen] plain getUserMedia succeeded, tracks:', stream.getTracks().length);
+        console.log('[offscreen] Plain getUserMedia succeeded (test fallback), tracks:', stream.getTracks().length);
         return stream;
       }
     }
   },
 
   storeRecording: async (blob: Blob) => {
-    const dataUrl = await blobToDataUrl(blob);
-    await chrome.storage.local.set({ recordingData: dataUrl });
+    try {
+      // Strip codec params from MIME type to avoid data URL parsing issues.
+      // "video/webm;codecs=vp8,opus" contains a comma that breaks data URL
+      // syntax (comma separates MIME from data in data: URLs).
+      const simpleMime = blob.type.split(';')[0] || 'video/webm';
+      const cleanBlob = new Blob([blob], { type: simpleMime });
+      const dataUrl = await blobToDataUrl(cleanBlob);
+      await chrome.storage.local.set({ recordingData: dataUrl });
+      return true;
+    } catch {
+      console.log('[offscreen] chrome.storage unavailable, falling back to message transfer');
+      return false;
+    }
   },
+
+  blobToDataUrl,
 
   sendMessage: (message) =>
     chrome.runtime.sendMessage(message),
 };
 
-// --- Create handler (recording starts when offscreen-start message arrives) -
+// --- Create handler --------------------------------------------------------
 
-const handleMessage = createOffscreenMessageHandler(mediaAPIs, createMediaRecorderSession);
+const handleMessage = createOffscreenMessageHandler(mediaAPIs, createRecordingSession);
 
-// --- Message listener (handles stop and any late start messages) -----------
-// Returns true for offscreen-stop to keep the message channel open during
-// async blob-to-data-URL conversion, preventing Chrome from auto-closing
-// the offscreen document before processing completes.
+// --- Message listener (handles stop) ---------------------------------------
 
 chrome.runtime.onMessage.addListener(
   (message: SWToOffscreen, _sender, sendResponse) => {
-    // Only handle offscreen-targeted messages; ignore popup/SW messages
-    // to avoid intercepting responses meant for other listeners.
-    if (message.type !== 'offscreen-start' && message.type !== 'offscreen-stop') {
+    if (message.type !== 'offscreen-stop') {
       return false;
     }
 
-    console.log('[offscreen] Received message:', JSON.stringify(message));
+    console.log('[offscreen] Received stop message');
 
-    if (message.type === 'offscreen-stop') {
-      // Return true to keep the message channel open during async
-      // blob-to-data-URL conversion, preventing Chrome from auto-closing
-      // the offscreen document before processing completes.
-      handleMessage(message).then((result) => {
-        console.log('[offscreen] Stop handled, sending response');
-        sendResponse(result ?? { type: 'offscreen-error', error: 'No result' });
-      }).catch((error: unknown) => {
-        const errorMessage =
-          error instanceof Error ? error.message : 'Unknown error';
-        console.error('[offscreen] Error handling stop:', errorMessage);
-        sendResponse({ type: 'offscreen-error', error: errorMessage });
-      });
-      return true;
-    }
-
-    // offscreen-start: fire-and-forget, don't block the sender
-    handleMessage(message).then(() => {
-      console.log('[offscreen] Start handled successfully');
+    // Return true to keep the message channel open during async
+    // blob-to-data-URL conversion, preventing Chrome from auto-closing
+    // the offscreen document before processing completes.
+    handleMessage(message).then((result) => {
+      console.log('[offscreen] Stop handled, sending response');
+      sendResponse(result ?? { type: 'offscreen-error', error: 'No result' });
     }).catch((error: unknown) => {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      console.error('[offscreen] Error handling start:', errorMessage);
+      console.error('[offscreen] Error handling stop:', errorMessage);
+      sendResponse({ type: 'offscreen-error', error: errorMessage });
     });
-    return false;
+    return true;
   },
 );
 
-// --- Signal readiness to the service worker --------------------------------
-// The SW waits for this message before sending offscreen-start, ensuring the
-// onMessage listener above is registered and ready to receive messages.
+// --- Auto-start recording from URL params ----------------------------------
+// The SW passes the streamId in the URL when creating the offscreen document.
+// This avoids unreliable SW→offscreen message delivery for the start command.
 
-chrome.runtime.sendMessage({ type: 'offscreen-ready' }).catch(() => {
-  // SW may not be listening yet in rare cases; the SW has a timeout fallback
-});
+const streamId = new URL(location.href).searchParams.get('streamId');
+if (streamId !== null) {
+  console.log('[offscreen] Auto-starting with streamId from URL');
+  handleMessage({ type: 'offscreen-start', streamId }).then(() => {
+    console.log('[offscreen] Recording started successfully');
+  }).catch((error: unknown) => {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[offscreen] Error starting recording:', errorMessage);
+    chrome.runtime.sendMessage({ type: 'offscreen-error', error: errorMessage }).catch(() => {});
+  });
+}

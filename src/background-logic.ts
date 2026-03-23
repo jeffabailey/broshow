@@ -42,15 +42,20 @@ export type OffscreenErrorOutcome = {
 
 export type ChromeAPIs = {
   readonly getActiveTab: () => Promise<{ id: number } | null>;
-  readonly createOffscreenDocument: () => Promise<void>;
+  readonly createOffscreenDocument: (streamId: string) => Promise<void>;
   readonly closeOffscreenDocument: () => Promise<void>;
-  readonly sendMessageToOffscreen: (message: SWToOffscreen) => Promise<void>;
-  readonly waitForOffscreenReady: () => Promise<void>;
+  readonly sendMessageToOffscreen: (message: SWToOffscreen) => Promise<OffscreenToSW>;
   readonly downloadFile: (url: string, filename: string) => Promise<void>;
   readonly getRecordingData: () => Promise<string | null>;
   readonly clearRecordingData: () => Promise<void>;
+  readonly broadcastState: (state: RecordingState) => void;
   readonly now: () => number;
+  readonly setTimeout: (callback: () => void, ms: number) => number;
+  readonly clearTimeout: (id: number) => void;
 };
+
+/** How long (ms) the SW waits for offscreen-result/error before recovering. */
+export const PROCESSING_TIMEOUT_MS = 30_000;
 
 // --- Pure functions --------------------------------------------------------
 
@@ -136,6 +141,25 @@ export const handleOffscreenError = (
  */
 export const createMessageHandler = (apis: ChromeAPIs) => {
   let state: RecordingState = createInitialState();
+  let processingTimeoutId: number | null = null;
+
+  const clearProcessingTimeout = () => {
+    if (processingTimeoutId !== null) {
+      apis.clearTimeout(processingTimeoutId);
+      processingTimeoutId = null;
+    }
+  };
+
+  const startProcessingTimeout = () => {
+    clearProcessingTimeout();
+    processingTimeoutId = apis.setTimeout(async () => {
+      processingTimeoutId = null;
+      if (state.status !== 'processing') return;
+      state = { status: 'idle' };
+      await apis.closeOffscreenDocument();
+      apis.broadcastState(state);
+    }, PROCESSING_TIMEOUT_MS);
+  };
 
   const handleMessage = async (message: Message): Promise<SWToPopup> => {
     switch (message.type) {
@@ -156,16 +180,12 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
         const result = handleStartRecording(state, tab.id, streamId, apis.now());
         state = result.newState;
 
-        // Effect: create offscreen document, wait for ready handshake, then start
-        // The handshake runs asynchronously after the response is returned to the
-        // popup so the UI updates immediately.
-        if (result.offscreenMessage) {
-          const offscreenMsg = result.offscreenMessage;
-          apis.createOffscreenDocument().then(async () => {
-            await apis.waitForOffscreenReady();
-            await apis.sendMessageToOffscreen(offscreenMsg);
-          }).catch(() => {
-            // Offscreen creation or messaging failed; handled by offscreen-error
+        // Effect: create offscreen document with streamId in URL.
+        // The offscreen document self-starts recording on load, avoiding
+        // unreliable SW→offscreen message delivery for the start command.
+        if (result.offscreenMessage && result.offscreenMessage.type === 'offscreen-start') {
+          apis.createOffscreenDocument(result.offscreenMessage.streamId).catch(() => {
+            // Offscreen creation failed; handled by offscreen-error
           });
         }
 
@@ -177,23 +197,43 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
         const result = handleStopRecording(state);
         state = result.newState;
 
-        // Effect: send stop to offscreen
+        // Effect: start timeout to recover if offscreen never responds
+        if (state.status === 'processing') {
+          startProcessingTimeout();
+        }
+
+        // Effect: send stop to offscreen. The offscreen's sendResponse callback
+        // is the guaranteed delivery path. Process the response asynchronously
+        // so the popup gets 'processing' immediately.
         if (result.offscreenMessage) {
-          await apis.sendMessageToOffscreen(result.offscreenMessage);
+          apis.sendMessageToOffscreen(result.offscreenMessage)
+            .then((response) => {
+              // Guard: skip if already handled (timeout fired or broadcast arrived first)
+              if (state.status !== 'processing') return;
+              return handleMessage(response as Message);
+            })
+            .catch(() => {
+              // Offscreen messaging failure handled by timeout recovery
+            });
         }
 
         return result.response;
       }
 
       case 'offscreen-result': {
+        // Guard: ignore if already idle (duplicate from broadcast + sendResponse)
+        if (state.status === 'idle') return handleGetState(state);
+
+        clearProcessingTimeout();
         // Pure: compute state transition
         const result = handleOffscreenResult(state, message);
         state = result.newState;
 
-        // Effect: read recording data from storage, download, clean up, close offscreen
-        const dataUrl = await apis.getRecordingData();
+        // Effect: get recording data (from message fallback or storage), download, clean up
+        const dataUrl = message.dataUrl ?? await apis.getRecordingData();
         if (!dataUrl) {
           await apis.closeOffscreenDocument();
+          apis.broadcastState(state);
           return { type: 'error', message: 'Recording data missing from storage' };
         }
         const filename = `brorecord-recording.${message.format}`;
@@ -201,10 +241,17 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
         await apis.clearRecordingData();
         await apis.closeOffscreenDocument();
 
+        // Push idle state to popup (it can't poll for this)
+        apis.broadcastState(state);
+
         return handleGetState(state);
       }
 
       case 'offscreen-error': {
+        // Guard: ignore if already idle (duplicate from broadcast + sendResponse)
+        if (state.status === 'idle') return handleGetState(state);
+
+        clearProcessingTimeout();
         // Pure: compute state transition
         const result = handleOffscreenError(state, message);
         state = result.newState;
@@ -212,19 +259,19 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
         // Effect: close offscreen document
         await apis.closeOffscreenDocument();
 
+        // Push idle state to popup
+        apis.broadcastState(state);
+
         return result.response;
       }
 
-      // offscreen-ready is handled by waitForOffscreenReady adapter, not here
-      case 'offscreen-ready':
-        return handleGetState(state);
-
-      // Messages that the SW sends (not receives) -- ignore
+      // Messages that the SW sends or offscreen handshake -- ignore
       case 'state-update':
       case 'error':
       case 'fallback-notice':
       case 'offscreen-start':
       case 'offscreen-stop':
+      case 'offscreen-ready':
         return handleGetState(state);
     }
   };

@@ -204,23 +204,27 @@ describe('background-logic', () => {
 
 describe('background wiring', () => {
   // Chrome API mocks as pure function stubs
+  // Default: sendMessageToOffscreen returns a never-resolving promise so the
+  // async sendResponse path doesn't fire during tests that don't test it.
+  const neverResolves = () => new Promise<OffscreenToSW>(() => {});
+
   const createMockChromeAPIs = () => ({
     getActiveTab: vi.fn<() => Promise<{ id: number } | null>>(),
-    createOffscreenDocument: vi.fn<() => Promise<void>>(),
-    closeOffscreenDocument: vi.fn<() => Promise<void>>(),
-    sendMessageToOffscreen: vi.fn<(message: SWToOffscreen) => Promise<void>>(),
-    waitForOffscreenReady: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    createOffscreenDocument: vi.fn<(streamId: string) => Promise<void>>().mockResolvedValue(undefined),
+    closeOffscreenDocument: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    sendMessageToOffscreen: vi.fn<(message: SWToOffscreen) => Promise<OffscreenToSW>>().mockImplementation(neverResolves),
     downloadFile: vi.fn<(url: string, filename: string) => Promise<void>>().mockResolvedValue(undefined),
     getRecordingData: vi.fn<() => Promise<string | null>>().mockResolvedValue(null),
     clearRecordingData: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    broadcastState: vi.fn(),
     now: vi.fn<() => number>(),
+    setTimeout: vi.fn<(cb: () => void, ms: number) => number>().mockReturnValue(1),
+    clearTimeout: vi.fn<(id: number) => void>(),
   });
 
-  it('handles start-recording: gets tab, creates offscreen, sends start with streamId from message', async () => {
+  it('handles start-recording: gets tab, creates offscreen with streamId in URL', async () => {
     const apis = createMockChromeAPIs();
     apis.getActiveTab.mockResolvedValue({ id: 42 });
-    apis.createOffscreenDocument.mockResolvedValue(undefined);
-    apis.sendMessageToOffscreen.mockResolvedValue(undefined);
     apis.now.mockReturnValue(5000);
 
     const { createMessageHandler } = await import('../../src/background-logic');
@@ -234,13 +238,9 @@ describe('background wiring', () => {
       state: { status: 'recording', tabId: 42, startTime: 5000 },
     });
 
-    // Offscreen creation + handshake runs asynchronously after response
+    // Offscreen creation runs asynchronously with streamId passed via URL
     await vi.waitFor(() => {
-      expect(apis.createOffscreenDocument).toHaveBeenCalled();
-      expect(apis.sendMessageToOffscreen).toHaveBeenCalledWith({
-        type: 'offscreen-start',
-        streamId: 'stream-42',
-      });
+      expect(apis.createOffscreenDocument).toHaveBeenCalledWith('stream-42');
     });
   });
 
@@ -262,7 +262,6 @@ describe('background wiring', () => {
   it('handles stop-recording: sends stop to offscreen', async () => {
     const apis = createMockChromeAPIs();
     apis.getActiveTab.mockResolvedValue({ id: 42 });
-    apis.createOffscreenDocument.mockResolvedValue(undefined);
     apis.sendMessageToOffscreen.mockResolvedValue(undefined);
     apis.now.mockReturnValue(5000);
 
@@ -301,7 +300,6 @@ describe('background wiring', () => {
   it('handles offscreen-result: reads data from storage, downloads, cleans up, closes offscreen', async () => {
     const apis = createMockChromeAPIs();
     apis.getActiveTab.mockResolvedValue({ id: 42 });
-    apis.createOffscreenDocument.mockResolvedValue(undefined);
     apis.sendMessageToOffscreen.mockResolvedValue(undefined);
     apis.closeOffscreenDocument.mockResolvedValue(undefined);
     apis.getRecordingData.mockResolvedValue('data:video/webm;base64,fakedata');
@@ -336,7 +334,6 @@ describe('background wiring', () => {
   it('handles offscreen-result with missing storage data: returns error', async () => {
     const apis = createMockChromeAPIs();
     apis.getActiveTab.mockResolvedValue({ id: 42 });
-    apis.createOffscreenDocument.mockResolvedValue(undefined);
     apis.sendMessageToOffscreen.mockResolvedValue(undefined);
     apis.closeOffscreenDocument.mockResolvedValue(undefined);
     apis.getRecordingData.mockResolvedValue(null);
@@ -363,11 +360,9 @@ describe('background wiring', () => {
     });
   });
 
-  it('waits for offscreen-ready before sending offscreen-start', async () => {
+  it('passes streamId to offscreen document via createOffscreenDocument', async () => {
     const apis = createMockChromeAPIs();
     apis.getActiveTab.mockResolvedValue({ id: 42 });
-    apis.createOffscreenDocument.mockResolvedValue(undefined);
-    apis.sendMessageToOffscreen.mockResolvedValue(undefined);
     apis.now.mockReturnValue(5000);
 
     const { createMessageHandler } = await import('../../src/background-logic');
@@ -375,21 +370,15 @@ describe('background wiring', () => {
 
     await handleMessage({ type: 'start-recording', streamId: 'stream-42' });
 
-    // Offscreen creation + handshake runs asynchronously after response
+    // Offscreen creation runs asynchronously with streamId
     await vi.waitFor(() => {
-      expect(apis.createOffscreenDocument).toHaveBeenCalled();
-      expect(apis.waitForOffscreenReady).toHaveBeenCalled();
-      expect(apis.sendMessageToOffscreen).toHaveBeenCalledWith({
-        type: 'offscreen-start',
-        streamId: 'stream-42',
-      });
+      expect(apis.createOffscreenDocument).toHaveBeenCalledWith('stream-42');
     });
   });
 
   it('handles offscreen-error: closes offscreen and returns error', async () => {
     const apis = createMockChromeAPIs();
     apis.getActiveTab.mockResolvedValue({ id: 42 });
-    apis.createOffscreenDocument.mockResolvedValue(undefined);
     apis.sendMessageToOffscreen.mockResolvedValue(undefined);
     apis.closeOffscreenDocument.mockResolvedValue(undefined);
     apis.now.mockReturnValue(5000);
@@ -410,6 +399,178 @@ describe('background wiring', () => {
     expect(response).toEqual({
       type: 'error',
       message: 'Recording failed completely',
+    });
+  });
+
+  it('starts a processing timeout when stop-recording transitions to processing', async () => {
+    const apis = createMockChromeAPIs();
+    apis.getActiveTab.mockResolvedValue({ id: 42 });
+    apis.now.mockReturnValue(5000);
+
+    const { createMessageHandler, PROCESSING_TIMEOUT_MS } = await import('../../src/background-logic');
+    const handleMessage = createMessageHandler(apis);
+
+    await handleMessage({ type: 'start-recording', streamId: 'stream-42' });
+    await handleMessage({ type: 'stop-recording' });
+
+    expect(apis.setTimeout).toHaveBeenCalledWith(expect.any(Function), PROCESSING_TIMEOUT_MS);
+  });
+
+  it('clears processing timeout when offscreen-result arrives', async () => {
+    const apis = createMockChromeAPIs();
+    apis.getActiveTab.mockResolvedValue({ id: 42 });
+    apis.getRecordingData.mockResolvedValue('data:video/webm;base64,fakedata');
+    apis.now.mockReturnValue(5000);
+    apis.setTimeout.mockReturnValue(42);
+
+    const { createMessageHandler } = await import('../../src/background-logic');
+    const handleMessage = createMessageHandler(apis);
+
+    await handleMessage({ type: 'start-recording', streamId: 'stream-42' });
+    await handleMessage({ type: 'stop-recording' });
+    await handleMessage({ type: 'offscreen-result', format: 'webm' });
+
+    expect(apis.clearTimeout).toHaveBeenCalledWith(42);
+  });
+
+  it('clears processing timeout when offscreen-error arrives', async () => {
+    const apis = createMockChromeAPIs();
+    apis.getActiveTab.mockResolvedValue({ id: 42 });
+    apis.now.mockReturnValue(5000);
+    apis.setTimeout.mockReturnValue(99);
+
+    const { createMessageHandler } = await import('../../src/background-logic');
+    const handleMessage = createMessageHandler(apis);
+
+    await handleMessage({ type: 'start-recording', streamId: 'stream-42' });
+    await handleMessage({ type: 'stop-recording' });
+    await handleMessage({ type: 'offscreen-error', error: 'fail' });
+
+    expect(apis.clearTimeout).toHaveBeenCalledWith(99);
+  });
+
+  it('timeout recovers to idle state, closes offscreen, and broadcasts', async () => {
+    const apis = createMockChromeAPIs();
+    apis.getActiveTab.mockResolvedValue({ id: 42 });
+    apis.now.mockReturnValue(5000);
+
+    // Capture the timeout callback
+    let timeoutCallback: (() => void) | null = null;
+    apis.setTimeout.mockImplementation((cb: () => void) => {
+      timeoutCallback = cb;
+      return 1;
+    });
+
+    const { createMessageHandler } = await import('../../src/background-logic');
+    const handleMessage = createMessageHandler(apis);
+
+    await handleMessage({ type: 'start-recording', streamId: 'stream-42' });
+    await handleMessage({ type: 'stop-recording' });
+
+    // Simulate timeout firing
+    expect(timeoutCallback).not.toBeNull();
+    await timeoutCallback!();
+
+    expect(apis.closeOffscreenDocument).toHaveBeenCalled();
+    expect(apis.broadcastState).toHaveBeenCalledWith({ status: 'idle' });
+
+    // State should be idle now
+    const stateResponse = await handleMessage({ type: 'get-state' });
+    expect(stateResponse).toEqual({
+      type: 'state-update',
+      state: { status: 'idle' },
+    });
+  });
+
+  it('processes offscreen sendResponse result via async delivery path', async () => {
+    const apis = createMockChromeAPIs();
+    apis.getActiveTab.mockResolvedValue({ id: 42 });
+    apis.now.mockReturnValue(5000);
+    apis.getRecordingData.mockResolvedValue('data:video/webm;base64,fakedata');
+
+    // sendMessageToOffscreen resolves with the offscreen's sendResponse value
+    apis.sendMessageToOffscreen.mockResolvedValue({
+      type: 'offscreen-result',
+      format: 'webm',
+    });
+
+    const { createMessageHandler } = await import('../../src/background-logic');
+    const handleMessage = createMessageHandler(apis);
+
+    await handleMessage({ type: 'start-recording', streamId: 'stream-42' });
+    await handleMessage({ type: 'stop-recording' });
+
+    // Wait for the async sendResponse path to process
+    await vi.waitFor(() => {
+      expect(apis.downloadFile).toHaveBeenCalledWith('data:video/webm;base64,fakedata', 'brorecord-recording.webm');
+    });
+
+    expect(apis.closeOffscreenDocument).toHaveBeenCalled();
+    expect(apis.broadcastState).toHaveBeenCalledWith({ status: 'idle' });
+  });
+
+  it('ignores duplicate offscreen-result when already handled via sendResponse', async () => {
+    const apis = createMockChromeAPIs();
+    apis.getActiveTab.mockResolvedValue({ id: 42 });
+    apis.now.mockReturnValue(5000);
+    apis.getRecordingData.mockResolvedValue('data:video/webm;base64,fakedata');
+
+    // sendResponse path delivers the result
+    apis.sendMessageToOffscreen.mockResolvedValue({
+      type: 'offscreen-result',
+      format: 'webm',
+    });
+
+    const { createMessageHandler } = await import('../../src/background-logic');
+    const handleMessage = createMessageHandler(apis);
+
+    await handleMessage({ type: 'start-recording', streamId: 'stream-42' });
+    await handleMessage({ type: 'stop-recording' });
+
+    // Wait for sendResponse path to complete
+    await vi.waitFor(() => {
+      expect(apis.downloadFile).toHaveBeenCalled();
+    });
+
+    // Now a duplicate broadcast arrives -- should be ignored (state is idle, not processing)
+    const response = await handleMessage({ type: 'offscreen-result', format: 'webm' });
+
+    // downloadFile should still only have been called once
+    expect(apis.downloadFile).toHaveBeenCalledTimes(1);
+    expect(response).toEqual({
+      type: 'state-update',
+      state: { status: 'idle' },
+    });
+  });
+
+  it('ignores duplicate offscreen-error when already handled', async () => {
+    const apis = createMockChromeAPIs();
+    apis.getActiveTab.mockResolvedValue({ id: 42 });
+    apis.now.mockReturnValue(5000);
+
+    apis.sendMessageToOffscreen.mockResolvedValue({
+      type: 'offscreen-error',
+      error: 'Encoding failed',
+    });
+
+    const { createMessageHandler } = await import('../../src/background-logic');
+    const handleMessage = createMessageHandler(apis);
+
+    await handleMessage({ type: 'start-recording', streamId: 'stream-42' });
+    await handleMessage({ type: 'stop-recording' });
+
+    // Wait for sendResponse path to process the error
+    await vi.waitFor(() => {
+      expect(apis.closeOffscreenDocument).toHaveBeenCalled();
+    });
+
+    // Duplicate broadcast arrives -- should be ignored
+    const response = await handleMessage({ type: 'offscreen-error', error: 'Encoding failed' });
+
+    expect(apis.closeOffscreenDocument).toHaveBeenCalledTimes(1);
+    expect(response).toEqual({
+      type: 'state-update',
+      state: { status: 'idle' },
     });
   });
 });

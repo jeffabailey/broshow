@@ -65,7 +65,8 @@ describe('offscreen-logic', () => {
 describe('offscreen wiring', () => {
   const createMockMediaAPIs = () => ({
     getUserMedia: vi.fn<(constraints: MediaStreamConstraints) => Promise<MediaStream>>(),
-    storeRecording: vi.fn<(blob: Blob) => Promise<void>>().mockResolvedValue(undefined),
+    storeRecording: vi.fn<(blob: Blob) => Promise<boolean>>().mockResolvedValue(true),
+    blobToDataUrl: vi.fn<(blob: Blob) => Promise<string>>().mockResolvedValue('data:video/webm;base64,fake'),
     sendMessage: vi.fn<(message: OffscreenToSW) => void>(),
   });
 

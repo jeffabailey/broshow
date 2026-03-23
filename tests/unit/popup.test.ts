@@ -44,9 +44,14 @@ describe('popup-logic', () => {
   });
 
   describe('messageForAction', () => {
-    it('creates start-recording message for start action', () => {
+    it('creates start-recording message for start action with streamId', () => {
+      const message = messageForAction('start', 'stream-42');
+      expect(message).toEqual({ type: 'start-recording', streamId: 'stream-42' });
+    });
+
+    it('creates start-recording message with empty streamId when none provided', () => {
       const message = messageForAction('start');
-      expect(message).toEqual({ type: 'start-recording' });
+      expect(message).toEqual({ type: 'start-recording', streamId: '' });
     });
 
     it('creates stop-recording message for stop action', () => {
@@ -63,9 +68,11 @@ describe('popup-logic', () => {
 
 describe('popup wiring', () => {
   const mockSendMessage = vi.fn();
+  const mockGetStreamId = vi.fn<() => Promise<string>>();
 
   beforeEach(() => {
     vi.resetAllMocks();
+    mockGetStreamId.mockResolvedValue('test-stream-id');
   });
 
   it('sends get-state message on initialization', async () => {
@@ -81,7 +88,7 @@ describe('popup wiring', () => {
       state: { status: 'idle' },
     } satisfies SWToPopup);
 
-    await initializePopup(mockButton, mockStatus, mockSendMessage);
+    await initializePopup(mockButton, mockStatus, mockSendMessage, mockGetStreamId);
 
     expect(mockSendMessage).toHaveBeenCalledWith({ type: 'get-state' });
   });
@@ -99,7 +106,7 @@ describe('popup wiring', () => {
       state: { status: 'idle' },
     } satisfies SWToPopup);
 
-    await initializePopup(mockButton, mockStatus, mockSendMessage);
+    await initializePopup(mockButton, mockStatus, mockSendMessage, mockGetStreamId);
 
     expect(mockButton.textContent).toBe('Start Recording');
     expect(mockStatus.textContent).toBe('Ready to record');
@@ -119,7 +126,7 @@ describe('popup wiring', () => {
       state: { status: 'recording', tabId: 1, startTime: 1000 },
     } satisfies SWToPopup);
 
-    await initializePopup(mockButton, mockStatus, mockSendMessage);
+    await initializePopup(mockButton, mockStatus, mockSendMessage, mockGetStreamId);
 
     expect(mockButton.textContent).toBe('Stop Recording');
     expect(mockStatus.textContent).toBe('Recording...');
@@ -138,7 +145,7 @@ describe('popup wiring', () => {
       message: 'Tab not found',
     } satisfies SWToPopup);
 
-    await initializePopup(mockButton, mockStatus, mockSendMessage);
+    await initializePopup(mockButton, mockStatus, mockSendMessage, mockGetStreamId);
 
     expect(mockStatus.textContent).toBe('Error: Tab not found');
   });
@@ -159,7 +166,7 @@ describe('popup wiring', () => {
       state: { status: 'idle' },
     } satisfies SWToPopup);
 
-    await initializePopup(mockButton, mockStatus, mockSendMessage);
+    await initializePopup(mockButton, mockStatus, mockSendMessage, mockGetStreamId);
 
     // Simulate click
     expect(clickHandler).toBeDefined();
@@ -169,7 +176,8 @@ describe('popup wiring', () => {
     });
     await clickHandler!();
 
-    expect(mockSendMessage).toHaveBeenCalledWith({ type: 'start-recording' });
+    expect(mockGetStreamId).toHaveBeenCalledOnce();
+    expect(mockSendMessage).toHaveBeenCalledWith({ type: 'start-recording', streamId: 'test-stream-id' });
   });
 
   it('sends stop-recording when stop button is clicked', async () => {
@@ -189,7 +197,7 @@ describe('popup wiring', () => {
       state: { status: 'recording', tabId: 1, startTime: 1000 },
     } satisfies SWToPopup);
 
-    await initializePopup(mockButton, mockStatus, mockSendMessage);
+    await initializePopup(mockButton, mockStatus, mockSendMessage, mockGetStreamId);
 
     // Simulate click (should send stop since we're recording)
     mockSendMessage.mockResolvedValue({
@@ -214,7 +222,7 @@ describe('popup wiring', () => {
       message: 'Using WebM format',
     } satisfies SWToPopup);
 
-    await initializePopup(mockButton, mockStatus, mockSendMessage);
+    await initializePopup(mockButton, mockStatus, mockSendMessage, mockGetStreamId);
 
     expect(mockStatus.textContent).toBe('Note: Using WebM format');
   });

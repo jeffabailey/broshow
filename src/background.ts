@@ -18,9 +18,9 @@ const chromeAPIs: ChromeAPIs = {
     return tab?.id != null ? { id: tab.id } : null;
   },
 
-  createOffscreenDocument: () =>
+  createOffscreenDocument: (streamId: string) =>
     chrome.offscreen.createDocument({
-      url: 'offscreen.html',
+      url: `offscreen.html?streamId=${encodeURIComponent(streamId)}`,
       reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.DISPLAY_MEDIA, chrome.offscreen.Reason.BLOBS],
       justification: 'Recording tab audio/video and converting blob to data URL',
     }),
@@ -36,22 +36,6 @@ const chromeAPIs: ChromeAPIs = {
   sendMessageToOffscreen: (message: SWToOffscreen) =>
     chrome.runtime.sendMessage(message),
 
-  waitForOffscreenReady: () =>
-    new Promise<void>((resolve) => {
-      const listener = (message: { type: string }) => {
-        if (message.type === 'offscreen-ready') {
-          chrome.runtime.onMessage.removeListener(listener);
-          resolve();
-        }
-      };
-      chrome.runtime.onMessage.addListener(listener);
-      // Timeout after 10 seconds to avoid hanging forever
-      setTimeout(() => {
-        chrome.runtime.onMessage.removeListener(listener);
-        resolve();
-      }, 10000);
-    }),
-
   downloadFile: async (url: string, filename: string) => {
     console.log('[sw] downloadFile called:', url.slice(0, 80), filename);
     await chrome.downloads.download({ url, filename });
@@ -64,7 +48,16 @@ const chromeAPIs: ChromeAPIs = {
 
   clearRecordingData: () => chrome.storage.local.remove('recordingData'),
 
+  broadcastState: (state) => {
+    chrome.runtime.sendMessage({ type: 'state-update', state }).catch(() => {
+      // Popup may be closed — ignore
+    });
+  },
+
   now: () => Date.now(),
+
+  setTimeout: (callback: () => void, ms: number) => self.setTimeout(callback, ms),
+  clearTimeout: (id: number) => self.clearTimeout(id),
 };
 
 // --- Message listener ------------------------------------------------------
