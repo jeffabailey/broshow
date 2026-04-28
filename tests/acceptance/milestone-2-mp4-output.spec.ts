@@ -2,6 +2,10 @@ import { test, expect, type BrowserContext } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import {
+  attachNetworkRecorder,
+  assertZeroExternalNetwork,
+} from './fixtures/no-network';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,6 +45,14 @@ test.beforeAll(() => {
 // @skip — activate after Walking Skeleton passes
 
 test.describe('Milestone 2: Mp4 Output', () => {
+  test.beforeEach(({ context }) => {
+    attachNetworkRecorder(context);
+  });
+
+  test.afterEach(({ context }) => {
+    assertZeroExternalNetwork(context);
+  });
+
   test.skip('Given I complete a recording, the downloaded file is mp4', async ({
     context,
   }) => {
