@@ -25,12 +25,15 @@ describe('Build output validation', () => {
     expect(manifest['manifest_version']).toBe(3);
   });
 
-  it('manifest declares offscreen and downloads permissions', () => {
+  it('manifest declares the authoritative 4-permission list (KPI cap <= 4)', () => {
     const manifest = readJsonFile(resolve(distDir, 'manifest.json')) as Record<string, unknown>;
     const permissions = manifest['permissions'] as string[];
-    expect(permissions).toContain('tabCapture');
-    expect(permissions).toContain('offscreen');
-    expect(permissions).toContain('downloads');
+    expect(permissions).toEqual(
+      expect.arrayContaining(['tabCapture', 'offscreen', 'storage', 'downloads']),
+    );
+    expect(permissions).toHaveLength(4);
+    expect(permissions).not.toContain('activeTab');
+    expect(permissions).not.toContain('tabs');
   });
 
   it('manifest declares a service worker background script', () => {

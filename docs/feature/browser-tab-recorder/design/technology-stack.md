@@ -1,4 +1,4 @@
-# Technology Stack: BroRecord
+# Technology Stack: BroShow
 
 ## Runtime
 
@@ -31,22 +31,52 @@
 
 ## Permissions
 
+> **Authoritative single source of truth.** The list below is the design's binding permission contract. The manifest (`src/manifest.json`) MUST conform to this list; CI enforces via the permission-count gate (see "Implementation status" below).
+
 ```json
 {
-  "permissions": ["tabCapture", "offscreen"],
+  "permissions": ["tabCapture", "offscreen", "storage", "downloads"],
   "optional_permissions": [],
   "host_permissions": []
 }
 ```
 
-- `tabCapture`: Required to capture tab media stream
-- `offscreen`: Required to create offscreen document for MediaRecorder
-- No `downloads` permission needed — `chrome.downloads.download()` works without it when downloading blob URLs
+### Design correction note (2026-04-27)
+
+This file previously asserted that `chrome.downloads.download()` works without the `downloads` permission when the source is a `blob:` URL. **That assertion was incorrect.** Per Chrome MV3 documentation, `chrome.downloads.download()` requires the `downloads` permission for every URL type (blob:, data:, http:); the "no permission" path applies only to `<a download>` element clicks, which use a different code path entirely. The DELIVER wave caught this when the manifest reduction to a 3-permission list would have broken the download pipeline, and the user (per /nw-deliver session 2026-04-27) chose to update the KPI cap from `<= 3` to `<= 4` rather than refactor the download path. The `Permissions requested <= 4` KPI in `discuss/outcome-kpis.md` reflects this. See `devops/upstream-changes.md` UC-1 history.
+
+### Required permissions (4 of 4 against KPI cap of <= 4)
+
+| Permission | Required for |
+|------------|--------------|
+| `tabCapture` | Capturing the tab media stream via `chrome.tabCapture.getMediaStreamId({targetTabId})`. No alternative MV3-compatible API exists for tab audio+video capture. |
+| `offscreen` | Hosting `MediaRecorder` and the mp4 muxer in a DOM-bearing document. MV3 service workers cannot run DOM-dependent APIs (`MediaRecorder`, `Blob` URL playback, `URL.createObjectURL` lifecycle), so `chrome.offscreen` is the only MV3-compliant path. |
+| `storage` | Three load-bearing uses, all `chrome.storage.local` and never transmitted: (a) recording-state persistence across MV3 service-worker eviction (the service worker can be torn down mid-recording and must rehydrate); (b) the in-extension health surface (`lastRecording` shown as ✓/⚠/✗ in the popup — see DEVOPS `monitoring-alerting.md`); (c) the opt-in local logger ring buffer (see DEVOPS `observability-design.md`). Also used to hand the recording payload from the offscreen document to the service worker for download. |
+| `downloads` | Required for `chrome.downloads.download()`, which the service worker invokes to write the recorded mp4/WebM file to the user's chosen download location. Privacy posture is unaffected: `downloads` only writes user-initiated files locally and does not enable any network egress. |
+
+### Explicitly rejected permissions
+
+The following permissions were considered and explicitly **not** requested. Each rejection is part of the privacy posture and the <= 4 KPI cap.
+
+| Permission | Why NOT requested |
+|------------|-------------------|
+| `activeTab` | `chrome.tabCapture.getMediaStreamId({targetTabId})` accepts an explicit tab ID, so the capture path does not depend on `activeTab`'s implicit grant model. |
+| `tabs` | The extension has no need to read tab metadata (URL, title, favIconUrl). Reading such metadata would itself violate the zero-network / minimum-trust privacy posture. |
+
+### Implementation status
+
+The current `src/manifest.json` declares **6 permissions** (`activeTab`, `tabs`, `tabCapture`, `offscreen`, `downloads`, `storage`) and DOES NOT match this design. The CI permission-count gate added in the DEVOPS wave will fail until DELIVER reduces the manifest to the 4-permission list above. See `docs/feature/browser-tab-recorder/devops/upstream-changes.md` UC-1 for the audit and reduction plan. This design is now authoritative; the manifest is the artifact that must change, not this document.
+
+### KPI mapping
+
+| KPI (from `discuss/outcome-kpis.md`) | Target | This design |
+|--------------------------------------|--------|-------------|
+| Permissions requested | <= 4 | **4 of 4** — exactly at the cap, with each permission justified above and two additional permissions (`activeTab`, `tabs`) explicitly rejected. |
 
 ## File Structure
 
 ```
-brorecord/
+broshow/
 ├── src/
 │   ├── popup.ts          # Popup UI logic
 │   ├── popup.html         # Popup markup

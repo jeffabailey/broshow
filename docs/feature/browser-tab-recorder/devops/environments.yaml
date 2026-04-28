@@ -1,0 +1,162 @@
+# Environments for BroShow
+#
+# For a browser extension, "environments" are not OS/cluster combinations.
+# They are install states (clean install, upgrade-from-prior-version, with-prior-state),
+# crossed with the supported browsers. CI matrix maps to (browser x install_state)
+# where applicable.
+
+version: 1
+
+# Supported browsers and their CI test depth.
+browsers:
+  - id: chrome
+    name: Google Chrome
+    family: chromium
+    min_version: "116"           # MV3 + offscreen + tabCapture all supported
+    ci_depth: full               # build + typecheck + unit + acceptance (Playwright)
+    runtime_supported: true
+    notes: >
+      Primary target. Chrome Web Store is the primary distribution channel.
+
+  - id: edge
+    name: Microsoft Edge
+    family: chromium
+    min_version: "116"           # Chromium-equivalent
+    ci_depth: full               # build + typecheck + unit + acceptance (Playwright via channel: msedge)
+    fallback_ci_depth: build_unit  # if Playwright/Edge proves awkward on CI runners
+    runtime_supported: true
+    notes: >
+      APIs are equivalent to Chrome. Distribution via Edge Add-ons store is a future option.
+
+  - id: firefox
+    name: Mozilla Firefox
+    family: gecko
+    min_version: "115"           # current ESR baseline as of 2026-04
+    ci_depth: build_unit         # build + typecheck + unit ONLY — no acceptance/Playwright
+    runtime_supported: false
+    deferred_blocker:
+      reason: >
+        Firefox does not implement chrome.offscreen. The current architecture
+        depends on the offscreen document to host MediaRecorder. Full Firefox
+        runtime support requires an architectural change (background page or
+        action page hosting MediaRecorder), which is deferred to a future feature.
+      tracked_in: docs/feature/browser-tab-recorder/devops/upstream-changes.md
+    notes: >
+      The Firefox CI job exists to catch API drift early (e.g., a TypeScript
+      reference to chrome.offscreen breaking the build). It does NOT validate
+      runtime behavior.
+
+# Install states the extension must handle correctly. These map to acceptance-test
+# scenarios, not to separate CI jobs.
+install_states:
+  - id: clean_install
+    description: >
+      First-ever install in a fresh browser profile. No prior chrome.storage.local
+      state exists. Extension must initialize cleanly and complete a recording.
+    primary_kpis_validated:
+      - time_to_first_recording_under_30s
+      - steps_to_record_at_most_3_clicks
+    test_coverage:
+      - tests/acceptance/walking-skeleton.spec.ts
+    required_for: [chrome, edge]
+
+  - id: upgrade_from_prior_version
+    description: >
+      User had vN-1 installed; vN is now installed. Prior chrome.storage.local
+      state may include older-shape RecordingState or LastRecording records.
+      Extension must not crash on unrecognized fields and must migrate or
+      discard gracefully.
+    primary_kpis_validated:
+      - recording_success_rate
+    test_coverage:
+      - "TODO: tests/acceptance/upgrade.spec.ts (not yet written)"
+    required_for: [chrome, edge]
+    notes: >
+      Migration policy: forward-compat by ignoring unknown fields; backward-
+      incompat changes to stored shapes require a one-time migration on
+      chrome.runtime.onInstalled with reason === 'update'.
+
+  - id: with_prior_recording_state
+    description: >
+      Extension is opened while a prior session has stale RecordingState
+      (e.g., status='recording' but no actual recording in progress —
+      a service worker eviction edge case). Extension must reset to idle
+      on startup and not block new recordings.
+    primary_kpis_validated:
+      - recording_success_rate
+    test_coverage:
+      - "TODO: tests/acceptance/stale-state-recovery.spec.ts (not yet written)"
+    required_for: [chrome, edge]
+    notes: >
+      MV3 service workers are evicted aggressively. Any state held only in
+      service-worker memory will be lost; state in chrome.storage.local
+      survives. The extension should treat any persisted 'recording' status
+      as suspect on cold start and reset to 'idle'.
+
+# Coexistence matrix: must not break alongside other commonly-installed extensions.
+coexistence_matrix:
+  - id: other_tab_recorder
+    description: >
+      User has another tab-recording extension installed (e.g., Loom,
+      Awesome Screenshot). Both may attempt tabCapture on the same tab.
+    expected_behavior: >
+      chrome.tabCapture is exclusive per tab; whichever extension acquires
+      the stream first wins. BroShow should surface a clear error
+      ('Another extension is already capturing this tab') and not crash.
+    test_coverage:
+      - "MANUAL: documented as a release-checklist item; not automated."
+    severity: low
+    notes: >
+      Hard to automate cleanly in CI. Manual smoke test pre-release.
+
+  - id: ad_blocker
+    description: User has a content-blocker extension (uBlock Origin, etc.).
+    expected_behavior: >
+      No interaction expected — BroShow does not load remote content.
+    test_coverage: []
+    severity: low
+
+  - id: privacy_extension
+    description: User has a privacy extension (Privacy Badger, etc.).
+    expected_behavior: >
+      No interaction expected — BroShow makes zero network requests
+      (validated by CI). Privacy extensions have nothing to block.
+    test_coverage:
+      - tests/acceptance/* (network-request assertion via page.on('request'))
+    severity: low
+
+# Distribution channels (the closest analog to "deployment environments").
+distribution:
+  primary:
+    channel: chrome_web_store
+    submission: manual
+    artifact: artifacts/broshow-{version}.zip
+    notes: >
+      Developer downloads the .zip artifact from the GitHub Actions run
+      (or, in the future, from the GitHub Release on tag) and uploads to
+      the CWS Developer Dashboard. CWS API publish is NOT wired.
+  future:
+    - channel: edge_addons_store
+      status: deferred
+      notes: Same .zip works; just another manual upload destination.
+    - channel: amo_firefox
+      status: blocked
+      blocker: deferred_blocker on browsers.firefox (chrome.offscreen)
+
+# What "production" means here.
+runtime_environment:
+  description: >
+    The user's browser process. There is no server, no cluster, no shared
+    state across users. Each install is its own runtime instance.
+  state_locations:
+    - location: chrome.storage.local
+      contents:
+        - RecordingState (transient; reset on cold start if 'recording')
+        - LastRecording (for in-extension health surface)
+        - broshow.logs (ring buffer, opt-in)
+        - broshow.logging.enabled (boolean toggle)
+      privacy_notes: >
+        All data stays local. Never transmitted. User-exportable on demand.
+    - location: chrome.downloads
+      contents: produced mp4 / webm files
+      privacy_notes: Saved to the user's chosen download location. Not visible to extension after save.

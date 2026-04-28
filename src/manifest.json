@@ -1,15 +1,13 @@
 {
   "manifest_version": 3,
-  "name": "BroRecord",
+  "name": "BroShow",
   "version": "0.1.0",
   "description": "Record a browser tab and save as mp4",
   "permissions": [
-    "activeTab",
-    "tabs",
     "tabCapture",
     "offscreen",
-    "downloads",
-    "storage"
+    "storage",
+    "downloads"
   ],
   "action": {
     "default_popup": "popup.html"

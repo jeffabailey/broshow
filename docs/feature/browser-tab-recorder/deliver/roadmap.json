@@ -2,8 +2,10 @@
   "roadmap": {
     "project_id": "browser-tab-recorder",
     "created_at": "2026-03-22T17:33:44Z",
-    "total_steps": 12,
-    "phases": 3
+    "refreshed_at": "2026-04-27T20:05:00Z",
+    "refresh_note": "Added Phase 04 (no-network fixture wiring) per /nw-deliver session 2026-04-27 to absorb DEVOPS retrofit must-have-to-ship work. Phase 01 and 02-01/02-02 already complete; 02-03 and 03-* resumed.",
+    "total_steps": 15,
+    "phases": 4
   },
   "phases": [
     {
@@ -136,12 +138,46 @@
         {
           "id": "03-03",
           "name": "Timestamped filename and final acceptance tests",
-          "criteria": "Downloaded files are named with the pattern brorecord-YYYY-MM-DD-HHmmss.mp4 using the user's local time. An acceptance test verifies the downloaded filename matches the expected pattern. All milestone 3 acceptance tests pass.",
+          "criteria": "Downloaded files are named with the pattern broshow-YYYY-MM-DD-HHmmss.mp4 using the user's local time. An acceptance test verifies the downloaded filename matches the expected pattern. All milestone 3 acceptance tests pass.",
           "files_to_modify": [
             "src/background.ts",
             "tests/acceptance/milestone-3-polish.spec.ts"
           ],
           "estimate_minutes": 25
+        }
+      ]
+    },
+    {
+      "id": "04",
+      "name": "DEVOPS Retrofit: No-Network Fixture Wiring",
+      "description": "Wire the tests/acceptance/fixtures/no-network.ts helper (created in DISTILL retrofit per DP-6) into the three pre-existing acceptance specs so the zero-network KPI is enforced uniformly across the suite. Without this wiring, the fixture only catches regressions in the new upgrade.spec.ts and stale-state-recovery.spec.ts, leaving the original specs unguarded. These steps must run BEFORE resuming 02-03 and 03-* so any failure path added later inherits the assertion.",
+      "steps": [
+        {
+          "id": "04-01",
+          "name": "Wire no-network fixture into walking-skeleton.spec.ts",
+          "criteria": "tests/acceptance/walking-skeleton.spec.ts imports attachNetworkRecorder and assertZeroExternalNetwork from ./fixtures/no-network. attachNetworkRecorder is called once during context setup; assertZeroExternalNetwork is called at the end of every test (or in afterEach). Running the spec passes with zero external (http/https) network requests recorded.",
+          "files_to_modify": [
+            "tests/acceptance/walking-skeleton.spec.ts"
+          ],
+          "estimate_minutes": 15
+        },
+        {
+          "id": "04-02",
+          "name": "Wire no-network fixture into milestone-2-mp4-output.spec.ts",
+          "criteria": "tests/acceptance/milestone-2-mp4-output.spec.ts imports and uses attachNetworkRecorder + assertZeroExternalNetwork on the same pattern as 04-01. Running the spec passes with zero external network requests.",
+          "files_to_modify": [
+            "tests/acceptance/milestone-2-mp4-output.spec.ts"
+          ],
+          "estimate_minutes": 15
+        },
+        {
+          "id": "04-03",
+          "name": "Wire no-network fixture into milestone-3-polish.spec.ts",
+          "criteria": "tests/acceptance/milestone-3-polish.spec.ts imports and uses attachNetworkRecorder + assertZeroExternalNetwork on the same pattern as 04-01. Running the spec passes with zero external network requests.",
+          "files_to_modify": [
+            "tests/acceptance/milestone-3-polish.spec.ts"
+          ],
+          "estimate_minutes": 15
         }
       ]
     }
@@ -160,8 +196,9 @@
     ]
   },
   "validation": {
-    "status": "pending",
-    "reviewer": "nw-solution-architect",
-    "approved_at": null
+    "status": "approved",
+    "reviewer": "user (per /nw-deliver session 2026-04-27)",
+    "approved_at": "2026-04-27T20:05:00Z",
+    "approval_note": "Approved as a refreshed-from-existing roadmap with must-have-to-ship scope. Original Phase 01 (walking skeleton) and Phase 02 steps 02-01/02-02 are already COMMIT/PASS in execution-log.json. Phase 02 step 02-03 (WebM fallback) and Phase 03 (polish) resume from the tail. Phase 04 is new and addresses DP-6 (no-network fixture wiring) from DEVOPS retrofit. Out-of-scope per user: DP-2/DP-3 (logger implementation), DP-4/DP-5 (un-skipping upgrade.spec.ts and stale-state-recovery.spec.ts — these stay @skip and are tracked in distill/wave-decisions.md as DELIVER follow-ups), DP-7..DP-15 (CI hardening, ESLint, npm audit, etc.). DES integrity verification (Phase 6 of /nw-deliver skill) is best-effort: DES Python tooling is not installed in this project; execution-log.json is maintained as a tracking record but not formally verified."
   }
 }

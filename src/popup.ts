@@ -18,27 +18,19 @@ const sendMessage = (message: PopupToSW): Promise<SWToPopup> =>
   chrome.runtime.sendMessage(message);
 
 /**
- * Find the target tab to capture. In the real popup overlay, the active tab
- * in the current window is the one to capture. In test mode (popup loaded
- * as a page), we look for the active non-extension tab.
+ * Find the target tab to capture. The active tab in the current window is the
+ * tab the user has focused; in the real popup overlay this is the content tab.
+ * If `chrome.tabCapture.getMediaStreamId` is later called against an
+ * uncapturable target (e.g., a chrome:// page), Chrome rejects with a clear
+ * error that the caller surfaces to the user — we don't filter URLs here, and
+ * we don't request the `tabs` or `activeTab` permission to read tab metadata
+ * (per `design/technology-stack.md` Permissions section).
  */
 const getTargetTabId = async (): Promise<number> => {
-  // First try: active tab in current window (works in real popup overlay)
   const activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
   const activeTab = activeTabs[0];
-
-  // If active tab is a content page, use it directly
-  if (activeTab?.id != null && activeTab.url && !activeTab.url.startsWith('chrome')) {
-    return activeTab.id;
-  }
-
-  // Fallback (test mode): popup is a tab, so find the most recent content tab
-  const allTabs = await chrome.tabs.query({ currentWindow: true });
-  const contentTab = allTabs.find(
-    (t) => t.id != null && t.url && !t.url.startsWith('chrome'),
-  );
-  if (contentTab?.id == null) throw new Error('No active tab found');
-  return contentTab.id;
+  if (activeTab?.id == null) throw new Error('No active tab found');
+  return activeTab.id;
 };
 
 const getStreamId = async (): Promise<string> => {
