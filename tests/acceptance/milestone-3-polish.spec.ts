@@ -2,6 +2,10 @@ import { test, expect, type BrowserContext } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import {
+  attachNetworkRecorder,
+  assertZeroExternalNetwork,
+} from './fixtures/no-network';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -42,6 +46,14 @@ test.beforeAll(() => {
 // @skip — activate after Milestone 2 passes
 
 test.describe('Milestone 3: Polish', () => {
+  test.beforeEach(({ context }) => {
+    attachNetworkRecorder(context);
+  });
+
+  test.afterEach(({ context }) => {
+    assertZeroExternalNetwork(context);
+  });
+
   test.skip('Given I start recording, the extension icon shows a recording indicator', async ({
     context,
   }) => {
@@ -138,9 +150,9 @@ test.describe('Milestone 3: Polish', () => {
     await popupPage.waitForTimeout(2000);
     await popupPage.click('button:has-text("Stop Recording")');
 
-    // Then: The filename matches brorecord-YYYY-MM-DD-HHmmss.mp4
+    // Then: The filename matches broshow-YYYY-MM-DD-HHmmss.mp4
     const downloadedFile = await waitForDownload(DOWNLOAD_DIR);
     const filename = path.basename(downloadedFile);
-    expect(filename).toMatch(/^brorecord-\d{4}-\d{2}-\d{2}-\d{6}\.mp4$/);
+    expect(filename).toMatch(/^broshow-\d{4}-\d{2}-\d{2}-\d{6}\.mp4$/);
   });
 });
