@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Walking Skeleton acceptance tests for BroRecord browser extension
+// Walking Skeleton acceptance tests for BroShow browser extension
 // ---------------------------------------------------------------------------
 // Extension testing requires chromium.launchPersistentContext() -- Playwright's
 // default context fixture does NOT support loading unpacked extensions.
@@ -16,6 +16,10 @@ import { test, expect, chromium, type BrowserContext } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import {
+  attachNetworkRecorder,
+  assertZeroExternalNetwork,
+} from './fixtures/no-network';
 
 // -- Paths --
 
@@ -50,7 +54,7 @@ const launchExtensionContext = async (): Promise<BrowserContext> => {
       `--disable-extensions-except=${EXTENSION_PATH}`,
       `--load-extension=${EXTENSION_PATH}`,
       // Auto-select tab capture source for tabCapture API
-      '--auto-select-tab-capture-source-by-title=BroRecord Test Page',
+      '--auto-select-tab-capture-source-by-title=BroShow Test Page',
       // Auto-select screen for getDisplayMedia fallback in test environments
       '--auto-select-desktop-capture-source=Entire screen',
       '--use-fake-ui-for-media-stream',
@@ -116,6 +120,11 @@ test.describe('Walking Skeleton: Extension Loading', () => {
 
   test.beforeAll(async () => {
     context = await launchExtensionContext();
+    attachNetworkRecorder(context);
+  });
+
+  test.afterEach(() => {
+    assertZeroExternalNetwork(context);
   });
 
   test.afterAll(async () => {
@@ -132,7 +141,7 @@ test.describe('Walking Skeleton: Extension Loading', () => {
   });
 
   test('the popup opens and shows a Start Recording button', async () => {
-    // Given: BroRecord extension is loaded in the browser
+    // Given: BroShow extension is loaded in the browser
     const extensionId = await getExtensionId(context);
 
     // When: I open the extension popup
@@ -196,6 +205,11 @@ test.describe('Walking Skeleton: Recording Pipeline', () => {
 
   test.beforeAll(async () => {
     context = await launchExtensionContext();
+    attachNetworkRecorder(context);
+  });
+
+  test.afterEach(() => {
+    assertZeroExternalNetwork(context);
   });
 
   test.afterAll(async () => {
@@ -203,7 +217,7 @@ test.describe('Walking Skeleton: Recording Pipeline', () => {
   });
 
   test('clicking Start Recording transitions to recording state', async () => {
-    // Given: BroRecord extension is loaded, I have a tab open
+    // Given: BroShow extension is loaded, I have a tab open
     const extensionId = await getExtensionId(context);
     const testPage = await context.newPage();
     await testPage.goto(`file://${TEST_PAGE_PATH}`);
@@ -247,7 +261,7 @@ test.describe('Walking Skeleton: Recording Pipeline', () => {
     }
     fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 
-    // Given: BroRecord extension is installed
+    // Given: BroShow extension is installed
     const extensionId = await getExtensionId(context);
     expect(extensionId).toBeTruthy();
 
@@ -371,7 +385,7 @@ test.describe('Walking Skeleton: Recording Pipeline', () => {
       // Check ~/Downloads too
       const homeDownloads = path.resolve(process.env.HOME || '', 'Downloads');
       const broFiles = fs.existsSync(homeDownloads)
-        ? fs.readdirSync(homeDownloads).filter(f => f.startsWith('brorecord'))
+        ? fs.readdirSync(homeDownloads).filter(f => f.startsWith('broshow'))
         : [];
       if (broFiles.length > 0) {
         console.log(`[test] Found in ~/Downloads: ${broFiles[0]}`);
@@ -407,17 +421,17 @@ test.describe('Walking Skeleton: Recording Pipeline', () => {
       ? fs.readdirSync(DOWNLOAD_DIR).filter(f => !f.endsWith('.crdownload'))
       : [];
     const homeDownloads = path.resolve(process.env.HOME || '', 'Downloads');
-    const brorecordFiles = fs.existsSync(homeDownloads)
-      ? fs.readdirSync(homeDownloads).filter(f => f.startsWith('brorecord'))
+    const broshowFiles = fs.existsSync(homeDownloads)
+      ? fs.readdirSync(homeDownloads).filter(f => f.startsWith('broshow'))
       : [];
-    console.log(`[test] Download dir: ${JSON.stringify(filesInDir)}, ~/Downloads: ${JSON.stringify(brorecordFiles)}`);
+    console.log(`[test] Download dir: ${JSON.stringify(filesInDir)}, ~/Downloads: ${JSON.stringify(broshowFiles)}`);
 
-    const allFiles = [...filesInDir, ...brorecordFiles];
+    const allFiles = [...filesInDir, ...broshowFiles];
     expect(allFiles.length).toBeGreaterThan(0);
 
     const downloadedFile = filesInDir.length > 0
       ? path.join(DOWNLOAD_DIR, filesInDir[0])
-      : path.join(homeDownloads, brorecordFiles[0]);
+      : path.join(homeDownloads, broshowFiles[0]);
 
     // And: The file has content (is a valid video container)
     const stats = fs.statSync(downloadedFile);
