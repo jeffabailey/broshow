@@ -15,6 +15,7 @@ import {
   handleOffscreenFallback,
   handleGetState,
   badgeFor,
+  formatRecordingFilename,
 } from '../../src/background-logic';
 
 // ---------------------------------------------------------------------------
@@ -237,6 +238,46 @@ describe('background-logic', () => {
       });
     });
   });
+
+  describe('formatRecordingFilename', () => {
+    it('formats a known date with mp4 extension correctly', () => {
+      // 2026-03-22 14:30:52 local time
+      const date = new Date(2026, 2, 22, 14, 30, 52); // month is 0-indexed
+      expect(formatRecordingFilename(date, 'mp4')).toBe('broshow-2026-03-22-143052.mp4');
+    });
+
+    it('formats a known date with webm extension correctly', () => {
+      const date = new Date(2026, 2, 22, 14, 30, 52);
+      expect(formatRecordingFilename(date, 'webm')).toBe('broshow-2026-03-22-143052.webm');
+    });
+
+    it('zero-pads single-digit month', () => {
+      // January = month 0, day 5, 09:07:03
+      const date = new Date(2026, 0, 5, 9, 7, 3);
+      expect(formatRecordingFilename(date, 'mp4')).toBe('broshow-2026-01-05-090703.mp4');
+    });
+
+    it('zero-pads single-digit day and time components', () => {
+      // March 7, 09:07:03
+      const date = new Date(2026, 2, 7, 9, 7, 3);
+      expect(formatRecordingFilename(date, 'mp4')).toBe('broshow-2026-03-07-090703.mp4');
+    });
+
+    it('result always matches the broshow filename pattern', () => {
+      const dates = [
+        new Date(2024, 11, 31, 23, 59, 59), // Dec 31 edge
+        new Date(2025, 0, 1, 0, 0, 0),       // Jan 1 midnight
+        new Date(2026, 5, 15, 12, 30, 0),    // mid-year
+      ];
+      for (const date of dates) {
+        for (const ext of ['mp4', 'webm'] as const) {
+          expect(formatRecordingFilename(date, ext)).toMatch(
+            /^broshow-\d{4}-\d{2}-\d{2}-\d{6}\.(mp4|webm)$/,
+          );
+        }
+      }
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -363,7 +404,10 @@ describe('background wiring', () => {
     });
 
     expect(apis.getRecordingData).toHaveBeenCalled();
-    expect(apis.downloadFile).toHaveBeenCalledWith('data:video/webm;base64,fakedata', 'broshow-recording.webm');
+    expect(apis.downloadFile).toHaveBeenCalledWith(
+      'data:video/webm;base64,fakedata',
+      expect.stringMatching(/^broshow-\d{4}-\d{2}-\d{2}-\d{6}\.webm$/),
+    );
     expect(apis.clearRecordingData).toHaveBeenCalled();
     expect(apis.closeOffscreenDocument).toHaveBeenCalled();
 
@@ -546,7 +590,10 @@ describe('background wiring', () => {
 
     // Wait for the async sendResponse path to process
     await vi.waitFor(() => {
-      expect(apis.downloadFile).toHaveBeenCalledWith('data:video/webm;base64,fakedata', 'broshow-recording.webm');
+      expect(apis.downloadFile).toHaveBeenCalledWith(
+        'data:video/webm;base64,fakedata',
+        expect.stringMatching(/^broshow-\d{4}-\d{2}-\d{2}-\d{6}\.webm$/),
+      );
     });
 
     expect(apis.closeOffscreenDocument).toHaveBeenCalled();
@@ -636,8 +683,11 @@ describe('background wiring', () => {
       fallbackDataUrl: 'data:video/webm;base64,fakewebm',
     });
 
-    // Should download as .webm
-    expect(apis.downloadFile).toHaveBeenCalledWith('data:video/webm;base64,fakewebm', 'broshow-recording.webm');
+    // Should download as .webm with timestamped filename
+    expect(apis.downloadFile).toHaveBeenCalledWith(
+      'data:video/webm;base64,fakewebm',
+      expect.stringMatching(/^broshow-\d{4}-\d{2}-\d{2}-\d{6}\.webm$/),
+    );
     expect(apis.clearRecordingData).toHaveBeenCalled();
     expect(apis.closeOffscreenDocument).toHaveBeenCalled();
 
@@ -672,8 +722,11 @@ describe('background wiring', () => {
       error: 'Simulated MP4 mux failure',
     });
 
-    // Should download from storage as .webm
-    expect(apis.downloadFile).toHaveBeenCalledWith('data:video/webm;base64,storedfallback', 'broshow-recording.webm');
+    // Should download from storage as .webm with timestamped filename
+    expect(apis.downloadFile).toHaveBeenCalledWith(
+      'data:video/webm;base64,storedfallback',
+      expect.stringMatching(/^broshow-\d{4}-\d{2}-\d{2}-\d{6}\.webm$/),
+    );
     expect(apis.clearRecordingData).toHaveBeenCalled();
     expect(apis.closeOffscreenDocument).toHaveBeenCalled();
     expect(apis.broadcastFallbackNotice).toHaveBeenCalledWith(

@@ -69,6 +69,27 @@ export const BADGE_RECORDING_COLOR = '#D32F2F';
 
 // --- Pure functions --------------------------------------------------------
 
+/** Pad a number to two digits with a leading zero if needed. */
+const pad2 = (n: number): string => String(n).padStart(2, '0');
+
+/**
+ * Format a recording filename using the user's local time.
+ * Pattern: broshow-YYYY-MM-DD-HHmmss.{ext}
+ * Pure function — no side effects, fully deterministic given the same Date.
+ */
+export const formatRecordingFilename = (
+  date: Date,
+  extension: 'mp4' | 'webm',
+): string => {
+  const year = date.getFullYear();
+  const month = pad2(date.getMonth() + 1); // getMonth() is 0-indexed
+  const day = pad2(date.getDate());
+  const hours = pad2(date.getHours());
+  const minutes = pad2(date.getMinutes());
+  const seconds = pad2(date.getSeconds());
+  return `broshow-${year}-${month}-${day}-${hours}${minutes}${seconds}.${extension}`;
+};
+
 /** Map a RecordingState to the badge text and optional background color.
  *  Recording → 'REC' with red background; all other states → '' (cleared). */
 export const badgeFor = (state: RecordingState): { text: string; color?: string } => {
@@ -283,7 +304,7 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
           apis.broadcastState(state);
           return { type: 'error', message: 'Recording data missing from storage' };
         }
-        const filename = `broshow-recording.${message.format}`;
+        const filename = formatRecordingFilename(new Date(apis.now()), message.format);
         await apis.downloadFile(dataUrl, filename);
         await apis.clearRecordingData();
         await apis.closeOffscreenDocument();
@@ -320,7 +341,7 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
           const fallbackBadge = badgeFor(state);
           apis.setBadge(fallbackBadge.text, fallbackBadge.color);
 
-          await apis.downloadFile(fallbackDataUrl, 'broshow-recording.webm');
+          await apis.downloadFile(fallbackDataUrl, formatRecordingFilename(new Date(apis.now()), 'webm'));
           await apis.clearRecordingData();
           await apis.closeOffscreenDocument();
           apis.broadcastState(state);
