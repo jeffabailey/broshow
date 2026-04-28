@@ -15,7 +15,7 @@ import {
 
 describe('types module', () => {
   it('exports the module marker confirming zero-runtime types module', () => {
-    expect(TYPES_MODULE_MARKER).toBe('brorecord-types');
+    expect(TYPES_MODULE_MARKER).toBe('broshow-types');
   });
 
   describe('RecordingState', () => {

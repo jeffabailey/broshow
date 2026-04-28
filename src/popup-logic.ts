@@ -38,6 +38,11 @@ interface StatusElement {
   textContent: string;
 }
 
+interface FallbackNoticeElement {
+  textContent: string;
+  hidden: boolean;
+}
+
 // --- Pure functions --------------------------------------------------------
 
 /** Map a RecordingState to a description of what the UI should show. */
@@ -93,6 +98,7 @@ const applyUI = (
 const handleResponse = (
   button: ButtonElement,
   status: StatusElement,
+  fallbackNotice: FallbackNoticeElement,
   response: SWToPopup,
 ): PopupAction | null => {
   switch (response.type) {
@@ -106,6 +112,8 @@ const handleResponse = (
       return null;
     case 'fallback-notice':
       status.textContent = `Note: ${response.message}`;
+      fallbackNotice.textContent = response.message;
+      fallbackNotice.hidden = false;
       return null;
   }
 };
@@ -125,10 +133,17 @@ export const initializePopup = async (
   sendMessage: SendMessage,
   getStreamId: GetStreamId,
   onMessage?: OnMessage,
+  fallbackNoticeElement?: FallbackNoticeElement,
 ): Promise<void> => {
+  // Provide a no-op fallback notice element when none is supplied (backwards-compatible).
+  const fallbackNotice: FallbackNoticeElement = fallbackNoticeElement ?? {
+    textContent: '',
+    hidden: true,
+  };
+
   // Query current state from service worker
   const response = await sendMessage({ type: 'get-state' });
-  let currentAction = handleResponse(button, status, response);
+  let currentAction = handleResponse(button, status, fallbackNotice, response);
 
   // Wire button click to send appropriate message
   button.addEventListener('click', async () => {
@@ -143,7 +158,7 @@ export const initializePopup = async (
 
       const message = messageForAction(currentAction, streamId);
       const clickResponse = await sendMessage(message);
-      currentAction = handleResponse(button, status, clickResponse);
+      currentAction = handleResponse(button, status, fallbackNotice, clickResponse);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       status.textContent = `Error: ${errorMessage}`;
@@ -153,6 +168,6 @@ export const initializePopup = async (
   // Listen for pushed state updates from the service worker
   // (e.g., when processing completes after stop-recording)
   onMessage?.((message) => {
-    currentAction = handleResponse(button, status, message);
+    currentAction = handleResponse(button, status, fallbackNotice, message);
   });
 };

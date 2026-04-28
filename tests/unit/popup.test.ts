@@ -226,4 +226,31 @@ describe('popup wiring', () => {
 
     expect(mockStatus.textContent).toBe('Note: Using WebM format');
   });
+
+  it('shows fallback notice element when fallback-notice received', async () => {
+    const mockButton = {
+      textContent: '',
+      disabled: false,
+      addEventListener: vi.fn(),
+    };
+    const mockStatus = { textContent: '' };
+    const mockFallbackNotice = { textContent: '', hidden: true };
+
+    mockSendMessage.mockResolvedValue({
+      type: 'fallback-notice',
+      message: 'Mp4 conversion failed; downloaded as WebM instead.',
+    } satisfies SWToPopup);
+
+    await initializePopup(
+      mockButton,
+      mockStatus,
+      mockSendMessage,
+      mockGetStreamId,
+      undefined,
+      mockFallbackNotice,
+    );
+
+    expect(mockFallbackNotice.hidden).toBe(false);
+    expect(mockFallbackNotice.textContent).toBe('Mp4 conversion failed; downloaded as WebM instead.');
+  });
 });

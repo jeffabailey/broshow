@@ -18,12 +18,19 @@ const chromeAPIs: ChromeAPIs = {
     return tab?.id != null ? { id: tab.id } : null;
   },
 
-  createOffscreenDocument: (streamId: string) =>
-    chrome.offscreen.createDocument({
-      url: `offscreen.html?streamId=${encodeURIComponent(streamId)}`,
+  createOffscreenDocument: async (streamId: string) => {
+    const stored = await chrome.storage.local.get('forceWebmFallback');
+    const forceFlag = stored.forceWebmFallback === true ? '&forceWebmFallback=1' : '';
+    if (forceFlag) {
+      // Clear the flag so it only applies once per test.
+      await chrome.storage.local.remove('forceWebmFallback');
+    }
+    return chrome.offscreen.createDocument({
+      url: `offscreen.html?streamId=${encodeURIComponent(streamId)}${forceFlag}`,
       reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.DISPLAY_MEDIA, chrome.offscreen.Reason.BLOBS],
       justification: 'Recording tab audio/video and converting blob to data URL',
-    }),
+    });
+  },
 
   closeOffscreenDocument: async () => {
     try {
@@ -50,6 +57,12 @@ const chromeAPIs: ChromeAPIs = {
 
   broadcastState: (state) => {
     chrome.runtime.sendMessage({ type: 'state-update', state }).catch(() => {
+      // Popup may be closed — ignore
+    });
+  },
+
+  broadcastFallbackNotice: (message) => {
+    chrome.runtime.sendMessage({ type: 'fallback-notice', message }).catch(() => {
       // Popup may be closed — ignore
     });
   },
@@ -84,4 +97,4 @@ chrome.runtime.onMessage.addListener(
   },
 );
 
-console.log('BroRecord service worker loaded');
+console.log('BroShow service worker loaded');

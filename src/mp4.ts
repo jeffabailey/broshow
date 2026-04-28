@@ -243,10 +243,14 @@ export const createRecordingSession: CreateRecorder = (
     console.log('[mp4] WebCodecs unavailable, using MediaRecorder (WebM output)');
   }
 
+  // Capture webmBlob lazily so it is available for webmFallback if stop() throws.
+  let capturedWebmBlob: Blob | null = null;
+
   return {
     stop: async () => {
       // 1. Stop MediaRecorder FIRST — before any reader cancellation
       const webmBlob = await webmSession.stop();
+      capturedWebmBlob = webmBlob;
       console.log('[mp4] MediaRecorder stopped, blob size:', webmBlob.size);
 
       if (!webcodecs) {
@@ -271,6 +275,14 @@ export const createRecordingSession: CreateRecorder = (
       // 4. WebCodecs produced no output — use WebM
       console.log('[mp4] WebCodecs produced no output (no decoderConfig), using WebM fallback');
       return webmBlob;
+    },
+
+    // Provide WebM fallback for error recovery in offscreen-logic.
+    // This is populated after the MediaRecorder stops (i.e. after stop() begins).
+    webmFallback: async () => {
+      if (capturedWebmBlob) return capturedWebmBlob;
+      // If stop() threw before MediaRecorder completed, stop it now to get a blob.
+      return webmSession.stop();
     },
   };
 };

@@ -15,7 +15,7 @@
 
 import type { SWToOffscreen } from './types';
 import { createOffscreenMessageHandler } from './offscreen-logic';
-import type { MediaAPIs } from './offscreen-logic';
+import type { MediaAPIs, CreateRecorder, RecorderSession } from './offscreen-logic';
 import { createRecordingSession } from './mp4';
 
 // --- Browser API adapters --------------------------------------------------
@@ -76,9 +76,32 @@ const mediaAPIs: MediaAPIs = {
     chrome.runtime.sendMessage(message),
 };
 
+// --- Recorder factory selection --------------------------------------------
+// URL parameter ?forceWebmFallback=1 enables forced MP4 failure for acceptance
+// tests that verify the WebM fallback path. The wrapped session throws on stop()
+// but exposes webmFallback() so the handler can recover the pre-recorded WebM blob.
+
+const forceMuxFailure = new URL(location.href).searchParams.get('forceWebmFallback') === '1';
+
+const recorderFactory: CreateRecorder = forceMuxFailure
+  ? (stream: MediaStream): RecorderSession => {
+      const realSession = createRecordingSession(stream);
+      return {
+        stop: async () => {
+          // Start the real session briefly to get a WebM blob via the fallback path,
+          // then throw to simulate MP4 mux failure.
+          // We intentionally reject here without calling realSession.stop() first
+          // so that webmFallback() (via realSession) can still recover the WebM data.
+          throw new Error('Simulated MP4 mux failure (test mode)');
+        },
+        webmFallback: realSession.webmFallback,
+      };
+    }
+  : createRecordingSession;
+
 // --- Create handler --------------------------------------------------------
 
-const handleMessage = createOffscreenMessageHandler(mediaAPIs, createRecordingSession);
+const handleMessage = createOffscreenMessageHandler(mediaAPIs, recorderFactory);
 
 // --- Message listener (handles stop) ---------------------------------------
 

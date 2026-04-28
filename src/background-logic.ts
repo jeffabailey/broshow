@@ -38,6 +38,11 @@ export type OffscreenErrorOutcome = {
   readonly response: SWToPopup;
 };
 
+export type OffscreenFallbackOutcome = {
+  readonly newState: RecordingState;
+  readonly fallbackNotice: SWToPopup;
+};
+
 // --- Port types for chrome API dependencies --------------------------------
 
 export type ChromeAPIs = {
@@ -49,6 +54,7 @@ export type ChromeAPIs = {
   readonly getRecordingData: () => Promise<string | null>;
   readonly clearRecordingData: () => Promise<void>;
   readonly broadcastState: (state: RecordingState) => void;
+  readonly broadcastFallbackNotice: (message: string) => void;
   readonly now: () => number;
   readonly setTimeout: (callback: () => void, ms: number) => number;
   readonly clearTimeout: (id: number) => void;
@@ -131,6 +137,18 @@ export const handleOffscreenError = (
 ): OffscreenErrorOutcome => ({
   newState: { status: 'idle' },
   response: { type: 'error', message: message.error },
+});
+
+/** Handle an offscreen-error message that carries a WebM fallback blob.
+ *  Pure state transition — returns the fallback-notice to broadcast. */
+export const handleOffscreenFallback = (
+  _state: RecordingState,
+): OffscreenFallbackOutcome => ({
+  newState: { status: 'idle' },
+  fallbackNotice: {
+    type: 'fallback-notice',
+    message: 'Mp4 conversion failed; downloaded as WebM instead.',
+  },
 });
 
 // --- Wiring function -------------------------------------------------------
@@ -236,7 +254,7 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
           apis.broadcastState(state);
           return { type: 'error', message: 'Recording data missing from storage' };
         }
-        const filename = `brorecord-recording.${message.format}`;
+        const filename = `broshow-recording.${message.format}`;
         await apis.downloadFile(dataUrl, filename);
         await apis.clearRecordingData();
         await apis.closeOffscreenDocument();
@@ -252,7 +270,32 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
         if (state.status === 'idle') return handleGetState(state);
 
         clearProcessingTimeout();
-        // Pure: compute state transition
+
+        // Resolve the WebM fallback data URL: either inline in the message (when
+        // chrome.storage was unavailable in the offscreen doc) or from storage
+        // (the normal path when offscreen-logic stored the fallback blob).
+        const inlineFallbackUrl = message.fallbackDataUrl;
+        const storedFallbackUrl = inlineFallbackUrl === undefined
+          ? await apis.getRecordingData()
+          : null;
+        const fallbackDataUrl = inlineFallbackUrl ?? storedFallbackUrl;
+
+        // If the offscreen doc provides a WebM fallback (mp4 mux failed but WebM
+        // was captured), download the WebM and notify the popup with a fallback-notice
+        // instead of a hard error.
+        if (fallbackDataUrl !== null) {
+          const fallbackResult = handleOffscreenFallback(state);
+          state = fallbackResult.newState;
+
+          await apis.downloadFile(fallbackDataUrl, 'broshow-recording.webm');
+          await apis.clearRecordingData();
+          await apis.closeOffscreenDocument();
+          apis.broadcastState(state);
+          apis.broadcastFallbackNotice(fallbackResult.fallbackNotice.message);
+          return fallbackResult.fallbackNotice;
+        }
+
+        // Pure: compute state transition for a hard error (no fallback available)
         const result = handleOffscreenError(state, message);
         state = result.newState;
 

@@ -3,3 +3,5 @@ dist/
 *.tsbuildinfo
 test-results
 tests/.tmp-profile
+tests/.tmp-profile-m2
+tests/downloads/

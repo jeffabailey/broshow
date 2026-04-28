@@ -1,4 +1,4 @@
-import { test, expect, type BrowserContext } from '@playwright/test';
+import { test, expect, chromium, type BrowserContext } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -22,6 +22,39 @@ const getExtensionId = async (context: BrowserContext): Promise<string> => {
   return background.url().split('/')[2];
 };
 
+const launchExtensionContext = async (): Promise<BrowserContext> => {
+  const userDataDir = path.resolve(__dirname, '../.tmp-profile-m2');
+  if (fs.existsSync(userDataDir)) {
+    fs.rmSync(userDataDir, { recursive: true });
+  }
+
+  const context = await chromium.launchPersistentContext(userDataDir, {
+    headless: false,
+    acceptDownloads: true,
+    args: [
+      `--disable-extensions-except=${EXTENSION_PATH}`,
+      `--load-extension=${EXTENSION_PATH}`,
+      '--auto-select-tab-capture-source-by-title=BroShow Test Page',
+      '--auto-select-desktop-capture-source=Entire screen',
+      '--use-fake-ui-for-media-stream',
+      '--use-fake-device-for-media-stream',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-search-engine-choice-screen',
+    ],
+  });
+
+  // Set Chrome's download directory via CDP
+  const cdpSession = await context.newCDPSession(context.pages()[0] || await context.newPage());
+  await cdpSession.send('Browser.setDownloadBehavior', {
+    behavior: 'allow',
+    downloadPath: DOWNLOAD_DIR,
+    eventsEnabled: true,
+  });
+
+  return context;
+};
+
 const waitForDownload = (dir: string, timeoutMs = 15000): Promise<string> =>
   new Promise((resolve, reject) => {
     const start = Date.now();
@@ -42,20 +75,24 @@ test.beforeAll(() => {
 });
 
 // -- Milestone 2: Mp4 Output --
-// @skip — activate after Walking Skeleton passes
 
 test.describe('Milestone 2: Mp4 Output', () => {
-  test.beforeEach(({ context }) => {
+  let context: BrowserContext;
+
+  test.beforeAll(async () => {
+    context = await launchExtensionContext();
     attachNetworkRecorder(context);
   });
 
-  test.afterEach(({ context }) => {
+  test.afterEach(() => {
     assertZeroExternalNetwork(context);
   });
 
-  test.skip('Given I complete a recording, the downloaded file is mp4', async ({
-    context,
-  }) => {
+  test.afterAll(async () => {
+    await context?.close();
+  });
+
+  test.skip('Given I complete a recording, the downloaded file is mp4', async () => {
     // Given: Extension loaded, recording completed
     const extensionId = await getExtensionId(context);
     const testPage = await context.newPage();
@@ -80,32 +117,42 @@ test.describe('Milestone 2: Mp4 Output', () => {
     expect(ftypSignature).toBe('ftyp');
   });
 
-  test.skip('Given mp4 muxing fails, the file is saved as WebM with a notice', async ({
-    context,
-  }) => {
-    // This test requires simulating mp4-mux failure.
-    // Strategy: inject a broken mp4-mux mock or test with corrupted stream data.
+  test('Given mp4 muxing fails, the file is saved as WebM with a notice', async () => {
+    test.setTimeout(60_000);
 
-    // Given: Mp4 muxing will fail for this recording
-    // (test setup would need to trigger this condition)
+    // Clean download dir before this test to avoid picking up the mp4 from the
+    // first test in this describe block.
+    if (fs.existsSync(DOWNLOAD_DIR)) {
+      fs.rmSync(DOWNLOAD_DIR, { recursive: true });
+    }
+    fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 
-    // When: I complete a recording
     const extensionId = await getExtensionId(context);
     const testPage = await context.newPage();
     await testPage.goto(`file://${TEST_PAGE_PATH}`);
 
     const popupPage = await context.newPage();
     await popupPage.goto(`chrome-extension://${extensionId}/popup.html`);
+
+    // Given: Set the forceWebmFallback flag in extension storage so the SW
+    // appends ?forceWebmFallback=1 to the offscreen document URL.
+    // This causes the offscreen document to throw during MP4 muxing while
+    // still recovering the pre-recorded WebM blob via the webmFallback path.
+    await popupPage.evaluate(() => {
+      return chrome.storage.local.set({ forceWebmFallback: true });
+    });
+
+    // When: I complete a recording
     await popupPage.click('button:has-text("Start Recording")');
     await popupPage.waitForSelector('button:has-text("Stop Recording")', { timeout: 5000 });
     await popupPage.waitForTimeout(2000);
     await popupPage.click('button:has-text("Stop Recording")');
 
-    // Then: A .webm file is downloaded instead
+    // Then: A .webm file is downloaded instead of mp4
     const downloadedFile = await waitForDownload(DOWNLOAD_DIR);
     expect(downloadedFile).toMatch(/\.webm$/);
 
-    // And: The popup shows a fallback message
+    // And: The popup shows a fallback notice element
     const fallbackMessage = popupPage.locator('[data-testid="fallback-notice"]');
     await expect(fallbackMessage).toBeVisible({ timeout: 5000 });
   });

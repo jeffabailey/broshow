@@ -1,12 +1,12 @@
 // --------------------------------------------------------------------------
-// BroRecord shared message and state types
+// BroShow shared message and state types
 // --------------------------------------------------------------------------
 // This module contains ONLY type definitions and a module marker constant.
 // No runtime logic, no side effects, no imports.
 // --------------------------------------------------------------------------
 
 /** Module marker for import verification in tests. */
-export const TYPES_MODULE_MARKER = 'brorecord-types' as const;
+export const TYPES_MODULE_MARKER = 'broshow-types' as const;
 
 // --- Recording State (discriminated union) --------------------------------
 
@@ -40,7 +40,7 @@ export type SWToOffscreen =
 export type OffscreenToSW =
   | { readonly type: 'offscreen-ready' }
   | { readonly type: 'offscreen-result'; readonly format: 'mp4' | 'webm'; readonly dataUrl?: string }
-  | { readonly type: 'offscreen-error'; readonly error: string };
+  | { readonly type: 'offscreen-error'; readonly error: string; readonly fallbackDataUrl?: string };
 
 // --- Unified Message type -------------------------------------------------
 

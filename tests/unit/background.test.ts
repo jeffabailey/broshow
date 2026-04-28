@@ -12,6 +12,7 @@ import {
   handleStopRecording,
   handleOffscreenResult,
   handleOffscreenError,
+  handleOffscreenFallback,
   handleGetState,
 } from '../../src/background-logic';
 
@@ -195,6 +196,25 @@ describe('background-logic', () => {
       });
     });
   });
+
+  describe('handleOffscreenFallback', () => {
+    it('transitions from processing to idle', () => {
+      const state: RecordingState = { status: 'processing' };
+      const result = handleOffscreenFallback(state);
+
+      expect(result.newState).toEqual({ status: 'idle' });
+    });
+
+    it('returns a fallback-notice with a human-readable message', () => {
+      const state: RecordingState = { status: 'processing' };
+      const result = handleOffscreenFallback(state);
+
+      expect(result.fallbackNotice).toEqual({
+        type: 'fallback-notice',
+        message: 'Mp4 conversion failed; downloaded as WebM instead.',
+      });
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -217,6 +237,7 @@ describe('background wiring', () => {
     getRecordingData: vi.fn<() => Promise<string | null>>().mockResolvedValue(null),
     clearRecordingData: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     broadcastState: vi.fn(),
+    broadcastFallbackNotice: vi.fn<(message: string) => void>(),
     now: vi.fn<() => number>(),
     setTimeout: vi.fn<(cb: () => void, ms: number) => number>().mockReturnValue(1),
     clearTimeout: vi.fn<(id: number) => void>(),
@@ -319,7 +340,7 @@ describe('background wiring', () => {
     });
 
     expect(apis.getRecordingData).toHaveBeenCalled();
-    expect(apis.downloadFile).toHaveBeenCalledWith('data:video/webm;base64,fakedata', 'brorecord-recording.webm');
+    expect(apis.downloadFile).toHaveBeenCalledWith('data:video/webm;base64,fakedata', 'broshow-recording.webm');
     expect(apis.clearRecordingData).toHaveBeenCalled();
     expect(apis.closeOffscreenDocument).toHaveBeenCalled();
 
@@ -502,7 +523,7 @@ describe('background wiring', () => {
 
     // Wait for the async sendResponse path to process
     await vi.waitFor(() => {
-      expect(apis.downloadFile).toHaveBeenCalledWith('data:video/webm;base64,fakedata', 'brorecord-recording.webm');
+      expect(apis.downloadFile).toHaveBeenCalledWith('data:video/webm;base64,fakedata', 'broshow-recording.webm');
     });
 
     expect(apis.closeOffscreenDocument).toHaveBeenCalled();
@@ -571,6 +592,73 @@ describe('background wiring', () => {
     expect(response).toEqual({
       type: 'state-update',
       state: { status: 'idle' },
+    });
+  });
+
+  it('handles offscreen-error with inline fallbackDataUrl: downloads WebM and broadcasts fallback-notice', async () => {
+    const apis = createMockChromeAPIs();
+    apis.getActiveTab.mockResolvedValue({ id: 42 });
+    apis.now.mockReturnValue(5000);
+
+    const { createMessageHandler } = await import('../../src/background-logic');
+    const handleMessage = createMessageHandler(apis);
+
+    await handleMessage({ type: 'start-recording', streamId: 'stream-42' });
+    await handleMessage({ type: 'stop-recording' });
+
+    // Offscreen sends error with a fallback WebM data URL (mp4 mux failed)
+    const response = await handleMessage({
+      type: 'offscreen-error',
+      error: 'Simulated MP4 mux failure',
+      fallbackDataUrl: 'data:video/webm;base64,fakewebm',
+    });
+
+    // Should download as .webm
+    expect(apis.downloadFile).toHaveBeenCalledWith('data:video/webm;base64,fakewebm', 'broshow-recording.webm');
+    expect(apis.clearRecordingData).toHaveBeenCalled();
+    expect(apis.closeOffscreenDocument).toHaveBeenCalled();
+
+    // Should broadcast fallback-notice (not error)
+    expect(apis.broadcastFallbackNotice).toHaveBeenCalledWith(
+      'Mp4 conversion failed; downloaded as WebM instead.',
+    );
+
+    // Response should be the fallback-notice
+    expect(response).toEqual({
+      type: 'fallback-notice',
+      message: 'Mp4 conversion failed; downloaded as WebM instead.',
+    });
+  });
+
+  it('handles offscreen-error with stored fallback (from chrome.storage): downloads WebM and broadcasts fallback-notice', async () => {
+    const apis = createMockChromeAPIs();
+    apis.getActiveTab.mockResolvedValue({ id: 42 });
+    apis.now.mockReturnValue(5000);
+    // Simulate storage having the fallback WebM data (offscreen stored it before sending error)
+    apis.getRecordingData.mockResolvedValue('data:video/webm;base64,storedfallback');
+
+    const { createMessageHandler } = await import('../../src/background-logic');
+    const handleMessage = createMessageHandler(apis);
+
+    await handleMessage({ type: 'start-recording', streamId: 'stream-42' });
+    await handleMessage({ type: 'stop-recording' });
+
+    // Offscreen sends error without inline fallback (stored in chrome.storage)
+    const response = await handleMessage({
+      type: 'offscreen-error',
+      error: 'Simulated MP4 mux failure',
+    });
+
+    // Should download from storage as .webm
+    expect(apis.downloadFile).toHaveBeenCalledWith('data:video/webm;base64,storedfallback', 'broshow-recording.webm');
+    expect(apis.clearRecordingData).toHaveBeenCalled();
+    expect(apis.closeOffscreenDocument).toHaveBeenCalled();
+    expect(apis.broadcastFallbackNotice).toHaveBeenCalledWith(
+      'Mp4 conversion failed; downloaded as WebM instead.',
+    );
+    expect(response).toEqual({
+      type: 'fallback-notice',
+      message: 'Mp4 conversion failed; downloaded as WebM instead.',
     });
   });
 });

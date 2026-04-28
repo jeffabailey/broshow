@@ -13,6 +13,7 @@ import type { PopupToSW, SWToPopup } from './types';
 
 const button = document.getElementById('action-button') as HTMLButtonElement;
 const status = document.getElementById('status') as HTMLParagraphElement;
+const fallbackNotice = document.getElementById('fallback-notice') as HTMLParagraphElement;
 
 const sendMessage = (message: PopupToSW): Promise<SWToPopup> =>
   chrome.runtime.sendMessage(message);
@@ -52,4 +53,4 @@ const onMessage = (handler: (message: import('./types').SWToPopup) => void) => {
   });
 };
 
-initializePopup(button, status, sendMessage, getStreamId, onMessage);
+initializePopup(button, status, sendMessage, getStreamId, onMessage, fallbackNotice);

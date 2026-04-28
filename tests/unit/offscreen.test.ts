@@ -244,4 +244,31 @@ describe('offscreen wiring', () => {
     expect(apis.getUserMedia).toHaveBeenCalledOnce();
     expect(factory).toHaveBeenCalledOnce();
   });
+
+  it('falls back to webmFallback blob when session stop throws, stores it and sends offscreen-error', async () => {
+    const apis = createMockMediaAPIs();
+    const mockStream = createMockStream();
+    apis.getUserMedia.mockResolvedValue(mockStream);
+
+    // Recorder that throws on stop but provides a WebM fallback
+    const webmBlob = new Blob(['fake-webm-fallback'], { type: 'video/webm' });
+    const factory = vi.fn().mockReturnValue({
+      stop: vi.fn<() => Promise<Blob>>().mockRejectedValue(new Error('MP4 mux failure')),
+      webmFallback: vi.fn<() => Promise<Blob>>().mockResolvedValue(webmBlob),
+    });
+
+    const { createOffscreenMessageHandler } = await import('../../src/offscreen-logic');
+    const handleMessage = createOffscreenMessageHandler(apis, factory);
+
+    await handleMessage({ type: 'offscreen-start', streamId: 'test-stream-id' });
+    await handleMessage({ type: 'offscreen-stop' });
+
+    // Should have stored the fallback WebM blob
+    expect(apis.storeRecording).toHaveBeenCalledWith(webmBlob);
+
+    // Should send offscreen-error (not offscreen-result) to signal fallback path
+    const sentMessage = apis.sendMessage.mock.calls[0][0];
+    expect(sentMessage.type).toBe('offscreen-error');
+    expect(sentMessage.error).toBe('MP4 mux failure');
+  });
 });

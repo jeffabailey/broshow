@@ -43,9 +43,12 @@ export type MediaAPIs = {
 
 // --- Recorder session port type --------------------------------------------
 // A recorder session captures a MediaStream and produces a Blob on stop.
+// webmFallback, when provided, allows the handler to recover a WebM blob
+// if the primary stop (e.g. MP4 muxing) throws an error.
 
 export type RecorderSession = {
   readonly stop: () => Promise<Blob>;
+  readonly webmFallback?: () => Promise<Blob>;
 };
 
 export type CreateRecorder = (stream: MediaStream) => RecorderSession;
@@ -83,8 +86,11 @@ export const createOffscreenMessageHandler = (
       return errorMsg;
     }
 
+    // Capture session reference before clearing so webmFallback is accessible.
+    const currentSession = session;
+
     try {
-      const recordingBlob = await session.stop();
+      const recordingBlob = await currentSession.stop();
       const stored = await apis.storeRecording(recordingBlob);
       // If storage succeeded, SW reads from chrome.storage.local.
       // If not (e.g. offscreen lacks chrome.storage), include data URL in message.
@@ -98,6 +104,29 @@ export const createOffscreenMessageHandler = (
       return resultMsg;
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+      // If the session provides a WebM fallback blob (e.g. when MP4 muxing fails),
+      // store it and include the data URL so the SW can download it as WebM.
+      if (currentSession.webmFallback) {
+        try {
+          const webmBlob = await currentSession.webmFallback();
+          const stored = await apis.storeRecording(webmBlob);
+          let fallbackDataUrl: string | undefined;
+          if (!stored) {
+            fallbackDataUrl = await apis.blobToDataUrl(webmBlob);
+          }
+          const fallbackMsg: OffscreenToSW = {
+            type: 'offscreen-error',
+            error: errorMessage,
+            fallbackDataUrl,
+          };
+          apis.sendMessage(fallbackMsg);
+          return fallbackMsg;
+        } catch {
+          // If even the fallback fails, fall through to plain error.
+        }
+      }
+
       const errorMsg = buildErrorMessage(errorMessage);
       apis.sendMessage(errorMsg);
       return errorMsg;
