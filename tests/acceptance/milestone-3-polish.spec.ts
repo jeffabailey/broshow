@@ -1,4 +1,4 @@
-import { test, expect, type BrowserContext } from '@playwright/test';
+import { test, expect, chromium, type BrowserContext } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -23,6 +23,38 @@ const getExtensionId = async (context: BrowserContext): Promise<string> => {
   return background.url().split('/')[2];
 };
 
+const launchExtensionContext = async (userDataDir: string): Promise<BrowserContext> => {
+  if (fs.existsSync(userDataDir)) {
+    fs.rmSync(userDataDir, { recursive: true });
+  }
+
+  const context = await chromium.launchPersistentContext(userDataDir, {
+    headless: false,
+    acceptDownloads: true,
+    args: [
+      `--disable-extensions-except=${EXTENSION_PATH}`,
+      `--load-extension=${EXTENSION_PATH}`,
+      '--auto-select-tab-capture-source-by-title=BroShow Test Page',
+      '--auto-select-desktop-capture-source=Entire screen',
+      '--use-fake-ui-for-media-stream',
+      '--use-fake-device-for-media-stream',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-search-engine-choice-screen',
+    ],
+  });
+
+  // Set Chrome's download directory via CDP
+  const cdpSession = await context.newCDPSession(context.pages()[0] || await context.newPage());
+  await cdpSession.send('Browser.setDownloadBehavior', {
+    behavior: 'allow',
+    downloadPath: DOWNLOAD_DIR,
+    eventsEnabled: true,
+  });
+
+  return context;
+};
+
 const waitForDownload = (dir: string, timeoutMs = 15000): Promise<string> =>
   new Promise((resolve, reject) => {
     const start = Date.now();
@@ -43,57 +75,52 @@ test.beforeAll(() => {
 });
 
 // -- Milestone 3: Polish --
-// @skip — activate after Milestone 2 passes
 
 test.describe('Milestone 3: Polish', () => {
-  test.beforeEach(({ context }) => {
+  let context: BrowserContext;
+
+  test.beforeAll(async () => {
+    context = await launchExtensionContext(
+      path.resolve(__dirname, '../.tmp-profile-m3'),
+    );
     attachNetworkRecorder(context);
   });
 
-  test.afterEach(({ context }) => {
+  test.afterEach(() => {
     assertZeroExternalNetwork(context);
   });
 
-  test.skip('Given I start recording, the extension icon shows a recording indicator', async ({
-    context,
-  }) => {
+  test.afterAll(async () => {
+    await context?.close();
+  });
+
+  test('badge appears on Start, clears on Stop', async () => {
+    test.setTimeout(60_000);
+
+    // Clean download dir before this test
+    if (fs.existsSync(DOWNLOAD_DIR)) {
+      fs.rmSync(DOWNLOAD_DIR, { recursive: true });
+    }
+    fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
+
     // Given: Extension loaded
     const extensionId = await getExtensionId(context);
     const testPage = await context.newPage();
     await testPage.goto(`file://${TEST_PAGE_PATH}`);
 
-    // When: I start recording
     const popupPage = await context.newPage();
     await popupPage.goto(`chrome-extension://${extensionId}/popup.html`);
+
+    // When: I start recording
     await popupPage.click('button:has-text("Start Recording")');
     await popupPage.waitForSelector('button:has-text("Stop Recording")', { timeout: 5000 });
 
-    // Then: The extension badge shows a recording indicator
-    // Note: Badge text/color is verified via chrome.action.getBadgeText in service worker.
-    // Playwright can check this via evaluating in the service worker context.
+    // Then: The extension badge shows 'REC'
     const background = context.serviceWorkers()[0];
-    const badgeText = await background.evaluate(() =>
+    const badgeTextAfterStart = await background.evaluate(() =>
       chrome.action.getBadgeText({})
     );
-    expect(badgeText).toBe('REC');
-
-    // Cleanup
-    await popupPage.click('button:has-text("Stop Recording")');
-    await waitForDownload(DOWNLOAD_DIR);
-  });
-
-  test.skip('Given I stop recording, the recording indicator is removed', async ({
-    context,
-  }) => {
-    // Given: Recording in progress
-    const extensionId = await getExtensionId(context);
-    const testPage = await context.newPage();
-    await testPage.goto(`file://${TEST_PAGE_PATH}`);
-
-    const popupPage = await context.newPage();
-    await popupPage.goto(`chrome-extension://${extensionId}/popup.html`);
-    await popupPage.click('button:has-text("Start Recording")');
-    await popupPage.waitForSelector('button:has-text("Stop Recording")', { timeout: 5000 });
+    expect(badgeTextAfterStart).toBe('REC');
 
     // When: I stop recording
     await popupPage.waitForTimeout(2000);
@@ -101,16 +128,13 @@ test.describe('Milestone 3: Polish', () => {
     await waitForDownload(DOWNLOAD_DIR);
 
     // Then: The badge is cleared
-    const background = context.serviceWorkers()[0];
-    const badgeText = await background.evaluate(() =>
+    const badgeTextAfterStop = await background.evaluate(() =>
       chrome.action.getBadgeText({})
     );
-    expect(badgeText).toBe('');
+    expect(badgeTextAfterStop).toBe('');
   });
 
-  test.skip('Given the tab is playing audio, the recording includes audio', async ({
-    context,
-  }) => {
+  test.skip('Given the tab is playing audio, the recording includes audio', async () => {
     // Given: A tab playing audio
     const extensionId = await getExtensionId(context);
     const testPage = await context.newPage();
@@ -134,9 +158,7 @@ test.describe('Milestone 3: Polish', () => {
     expect(stats.size).toBeGreaterThan(5000);
   });
 
-  test.skip('Given I complete a recording, the filename has the correct format', async ({
-    context,
-  }) => {
+  test.skip('Given I complete a recording, the filename has the correct format', async () => {
     // Given: Extension loaded
     const extensionId = await getExtensionId(context);
     const testPage = await context.newPage();

@@ -14,6 +14,7 @@ import {
   handleOffscreenError,
   handleOffscreenFallback,
   handleGetState,
+  badgeFor,
 } from '../../src/background-logic';
 
 // ---------------------------------------------------------------------------
@@ -21,6 +22,27 @@ import {
 // ---------------------------------------------------------------------------
 
 describe('background-logic', () => {
+  describe('badgeFor', () => {
+    it('returns empty text when idle', () => {
+      const state: RecordingState = { status: 'idle' };
+      const badge = badgeFor(state);
+      expect(badge.text).toBe('');
+    });
+
+    it('returns REC text with red color when recording', () => {
+      const state: RecordingState = { status: 'recording', tabId: 1, startTime: 1000 };
+      const badge = badgeFor(state);
+      expect(badge.text).toBe('REC');
+      expect(badge.color).toBeDefined();
+    });
+
+    it('returns empty text when processing', () => {
+      const state: RecordingState = { status: 'processing' };
+      const badge = badgeFor(state);
+      expect(badge.text).toBe('');
+    });
+  });
+
   describe('createInitialState', () => {
     it('returns idle state', () => {
       const state = createInitialState();
@@ -238,6 +260,7 @@ describe('background wiring', () => {
     clearRecordingData: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     broadcastState: vi.fn(),
     broadcastFallbackNotice: vi.fn<(message: string) => void>(),
+    setBadge: vi.fn<(text: string, color?: string) => void>(),
     now: vi.fn<() => number>(),
     setTimeout: vi.fn<(cb: () => void, ms: number) => number>().mockReturnValue(1),
     clearTimeout: vi.fn<(id: number) => void>(),

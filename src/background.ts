@@ -67,6 +67,13 @@ const chromeAPIs: ChromeAPIs = {
     });
   },
 
+  setBadge: (text, color) => {
+    chrome.action.setBadgeText({ text });
+    if (color) {
+      chrome.action.setBadgeBackgroundColor({ color });
+    }
+  },
+
   now: () => Date.now(),
 
   setTimeout: (callback: () => void, ms: number) => self.setTimeout(callback, ms),

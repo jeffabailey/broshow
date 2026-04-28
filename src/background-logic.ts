@@ -55,6 +55,7 @@ export type ChromeAPIs = {
   readonly clearRecordingData: () => Promise<void>;
   readonly broadcastState: (state: RecordingState) => void;
   readonly broadcastFallbackNotice: (message: string) => void;
+  readonly setBadge: (text: string, color?: string) => void;
   readonly now: () => number;
   readonly setTimeout: (callback: () => void, ms: number) => number;
   readonly clearTimeout: (id: number) => void;
@@ -63,7 +64,22 @@ export type ChromeAPIs = {
 /** How long (ms) the SW waits for offscreen-result/error before recovering. */
 export const PROCESSING_TIMEOUT_MS = 30_000;
 
+/** Recording badge color — visible red on the Chrome toolbar. */
+export const BADGE_RECORDING_COLOR = '#D32F2F';
+
 // --- Pure functions --------------------------------------------------------
+
+/** Map a RecordingState to the badge text and optional background color.
+ *  Recording → 'REC' with red background; all other states → '' (cleared). */
+export const badgeFor = (state: RecordingState): { text: string; color?: string } => {
+  switch (state.status) {
+    case 'recording':
+      return { text: 'REC', color: BADGE_RECORDING_COLOR };
+    case 'idle':
+    case 'processing':
+      return { text: '' };
+  }
+};
 
 /** Create the initial idle state. */
 export const createInitialState = (): RecordingState => ({ status: 'idle' });
@@ -174,6 +190,7 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
       processingTimeoutId = null;
       if (state.status !== 'processing') return;
       state = { status: 'idle' };
+      apis.setBadge(badgeFor(state).text, badgeFor(state).color);
       await apis.closeOffscreenDocument();
       apis.broadcastState(state);
     }, PROCESSING_TIMEOUT_MS);
@@ -198,6 +215,10 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
         const result = handleStartRecording(state, tab.id, streamId, apis.now());
         state = result.newState;
 
+        // Effect: update badge to reflect new recording state
+        const badge = badgeFor(state);
+        apis.setBadge(badge.text, badge.color);
+
         // Effect: create offscreen document with streamId in URL.
         // The offscreen document self-starts recording on load, avoiding
         // unreliable SW→offscreen message delivery for the start command.
@@ -214,6 +235,10 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
         // Pure: compute state transition
         const result = handleStopRecording(state);
         state = result.newState;
+
+        // Effect: update badge to reflect new processing/idle state
+        const badge = badgeFor(state);
+        apis.setBadge(badge.text, badge.color);
 
         // Effect: start timeout to recover if offscreen never responds
         if (state.status === 'processing') {
@@ -246,6 +271,10 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
         // Pure: compute state transition
         const result = handleOffscreenResult(state, message);
         state = result.newState;
+
+        // Effect: clear badge now that recording is done
+        const resultBadge = badgeFor(state);
+        apis.setBadge(resultBadge.text, resultBadge.color);
 
         // Effect: get recording data (from message fallback or storage), download, clean up
         const dataUrl = message.dataUrl ?? await apis.getRecordingData();
@@ -287,6 +316,10 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
           const fallbackResult = handleOffscreenFallback(state);
           state = fallbackResult.newState;
 
+          // Effect: clear badge on transition to idle via fallback path
+          const fallbackBadge = badgeFor(state);
+          apis.setBadge(fallbackBadge.text, fallbackBadge.color);
+
           await apis.downloadFile(fallbackDataUrl, 'broshow-recording.webm');
           await apis.clearRecordingData();
           await apis.closeOffscreenDocument();
@@ -298,6 +331,10 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
         // Pure: compute state transition for a hard error (no fallback available)
         const result = handleOffscreenError(state, message);
         state = result.newState;
+
+        // Effect: clear badge on transition to idle via error path
+        const errorBadge = badgeFor(state);
+        apis.setBadge(errorBadge.text, errorBadge.color);
 
         // Effect: close offscreen document
         await apis.closeOffscreenDocument();
