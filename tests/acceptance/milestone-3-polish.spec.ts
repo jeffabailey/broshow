@@ -134,7 +134,15 @@ test.describe('Milestone 3: Polish', () => {
     expect(badgeTextAfterStop).toBe('');
   });
 
-  test.skip('Given the tab is playing audio, the recording includes audio', async () => {
+  test('Given the tab is playing audio, the recording includes audio', async () => {
+    test.setTimeout(60_000);
+
+    // Clean download dir before this test
+    if (fs.existsSync(DOWNLOAD_DIR)) {
+      fs.rmSync(DOWNLOAD_DIR, { recursive: true });
+    }
+    fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
+
     // Given: A tab playing audio
     const extensionId = await getExtensionId(context);
     const testPage = await context.newPage();
