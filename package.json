@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "node esbuild.config.mjs",
+    "package": "node scripts/package-extensions.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:acceptance": "playwright test",
