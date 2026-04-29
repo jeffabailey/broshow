@@ -37,22 +37,24 @@ const blobToDataUrl = (blob: Blob): Promise<string> =>
     reader.readAsDataURL(blob);
   });
 
-const renderUI = (): void => {
+// renderButton ONLY updates the button. Status text is owned by the event
+// handlers (start/stop) so a caller's error message survives the
+// state -> idle transition. Earlier versions of this file overwrote
+// status.textContent here, which clobbered "getDisplayMedia rejected: ..."
+// with "Ready" the moment the error path returned to idle.
+const renderButton = (): void => {
   switch (state) {
     case 'idle':
       button.textContent = 'Pick & Start Recording';
       button.disabled = false;
-      status.textContent = 'Ready';
       break;
     case 'recording':
       button.textContent = 'Stop Recording';
       button.disabled = false;
-      status.textContent = 'Recording...';
       break;
     case 'processing':
       button.textContent = 'Processing...';
       button.disabled = true;
-      status.textContent = 'Processing recording...';
       break;
     case 'done':
       button.disabled = true;
@@ -71,7 +73,8 @@ const startRecording = async (): Promise<void> => {
     );
     session = createRecordingSession(stream);
     state = 'recording';
-    renderUI();
+    status.textContent = 'Recording...';
+    renderButton();
 
     // If the user stops sharing via Firefox's native control, treat it as a
     // Stop click so the recording is finalized and downloaded.
@@ -87,7 +90,7 @@ const startRecording = async (): Promise<void> => {
     console.log('[record] startRecording: REJECTED', { name: e?.name, message: e?.message });
     status.textContent = `getDisplayMedia rejected: ${e?.name ?? 'UnknownError'} — ${e?.message ?? 'no message'}`;
     state = 'idle';
-    renderUI();
+    renderButton();
   }
 };
 
@@ -95,7 +98,8 @@ const stopRecording = async (): Promise<void> => {
   if (!session || !stream) return;
 
   state = 'processing';
-  renderUI();
+  status.textContent = 'Processing recording...';
+  renderButton();
 
   const currentSession = session;
   const currentStream = stream;
@@ -117,7 +121,7 @@ const stopRecording = async (): Promise<void> => {
     state = 'idle';
   } finally {
     currentStream.getTracks().forEach((t) => t.stop());
-    renderUI();
+    renderButton();
   }
 };
 
@@ -129,4 +133,5 @@ button.addEventListener('click', () => {
   }
 });
 
-renderUI();
+status.textContent = 'Ready';
+renderButton();
