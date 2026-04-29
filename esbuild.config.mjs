@@ -25,10 +25,12 @@ await esbuild.build({
   sourcemap: true,
 });
 
-// Copy static assets from src/ to dist/
-cpSync(resolve(srcDir, 'manifest.json'), resolve(distDir, 'manifest.json'));
-cpSync(resolve(srcDir, 'popup.html'), resolve(distDir, 'popup.html'));
-cpSync(resolve(srcDir, 'popup.css'), resolve(distDir, 'popup.css'));
-cpSync(resolve(srcDir, 'offscreen.html'), resolve(distDir, 'offscreen.html'));
+// Copy static assets from src/ to dist/. force:true so concurrent builds
+// (e.g., parallel vitest beforeAll hooks) don't race on EEXIST.
+const copyOpts = { force: true };
+cpSync(resolve(srcDir, 'manifest.json'), resolve(distDir, 'manifest.json'), copyOpts);
+cpSync(resolve(srcDir, 'popup.html'), resolve(distDir, 'popup.html'), copyOpts);
+cpSync(resolve(srcDir, 'popup.css'), resolve(distDir, 'popup.css'), copyOpts);
+cpSync(resolve(srcDir, 'offscreen.html'), resolve(distDir, 'offscreen.html'), copyOpts);
 
 console.log('Build complete: dist/');
