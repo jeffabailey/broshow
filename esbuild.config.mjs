@@ -16,6 +16,7 @@ await esbuild.build({
     resolve(srcDir, 'popup.ts'),
     resolve(srcDir, 'background.ts'),
     resolve(srcDir, 'offscreen.ts'),
+    resolve(srcDir, 'record.ts'),
   ],
   bundle: true,
   outdir: distDir,
@@ -32,5 +33,6 @@ cpSync(resolve(srcDir, 'manifest.json'), resolve(distDir, 'manifest.json'), copy
 cpSync(resolve(srcDir, 'popup.html'), resolve(distDir, 'popup.html'), copyOpts);
 cpSync(resolve(srcDir, 'popup.css'), resolve(distDir, 'popup.css'), copyOpts);
 cpSync(resolve(srcDir, 'offscreen.html'), resolve(distDir, 'offscreen.html'), copyOpts);
+cpSync(resolve(srcDir, 'record.html'), resolve(distDir, 'record.html'), copyOpts);
 
 console.log('Build complete: dist/');
