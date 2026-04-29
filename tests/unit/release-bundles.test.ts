@@ -62,6 +62,14 @@ describe('Release bundle install validation', () => {
       expect(gecko?.id).toBeTruthy();
     });
 
+    it('manifest declares data_collection_permissions (AMO upload rejects without it)', () => {
+      const m = readJson(resolve(firefoxDistDir, 'manifest.json'));
+      const bss = m.browser_specific_settings as Record<string, unknown>;
+      const gecko = bss?.gecko as Record<string, unknown>;
+      const dcp = gecko?.data_collection_permissions as Record<string, unknown>;
+      expect(dcp?.required).toEqual(expect.arrayContaining(['none']));
+    });
+
     it('background includes a scripts fallback alongside service_worker (Firefox MV3 install requirement)', () => {
       const m = readJson(resolve(firefoxDistDir, 'manifest.json'));
       const bg = m.background as Record<string, unknown>;

@@ -119,12 +119,29 @@ describe('Extension validation', () => {
         name: 'x',
         version: '1.0.0',
         background: { service_worker: 'sw.js' },
-        browser_specific_settings: { gecko: { id: 'x@y.com' } },
+        browser_specific_settings: {
+          gecko: { id: 'x@y.com', data_collection_permissions: { required: ['none'] } },
+        },
       });
       writeFileSync(resolve(dir, 'sw.js'), '');
       const result = validateExtension(dir, { target: 'firefox' });
       expect(result.ok).toBe(false);
       expect(result.errors.some((e) => e.includes('background.scripts fallback'))).toBe(true);
+    });
+
+    it('flags missing data_collection_permissions (AMO upload rejects without it)', () => {
+      const dir = tmp('no-dcp');
+      writeManifest(dir, {
+        manifest_version: 3,
+        name: 'x',
+        version: '1.0.0',
+        background: { service_worker: 'sw.js', scripts: ['sw.js'] },
+        browser_specific_settings: { gecko: { id: 'x@y.com' } },
+      });
+      writeFileSync(resolve(dir, 'sw.js'), '');
+      const result = validateExtension(dir, { target: 'firefox' });
+      expect(result.ok).toBe(false);
+      expect(result.errors.some((e) => e.includes('data_collection_permissions'))).toBe(true);
     });
 
     it('does not flag firefox-specific issues for chrome target', () => {

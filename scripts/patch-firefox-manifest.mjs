@@ -14,6 +14,9 @@ export const patchManifestForFirefox = (manifest) => ({
     gecko: {
       id: FIREFOX_GECKO_ID,
       strict_min_version: FIREFOX_STRICT_MIN_VERSION,
+      data_collection_permissions: {
+        required: ['none'],
+      },
     },
   },
 });

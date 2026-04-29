@@ -80,10 +80,16 @@ export const validateExtension = (extensionPath, { target = 'chrome' } = {}) => 
   }
 
   if (target === 'firefox') {
-    const geckoId = manifest.browser_specific_settings?.gecko?.id;
-    if (!geckoId) {
+    const gecko = manifest.browser_specific_settings?.gecko;
+    if (!gecko?.id) {
       errors.push(
         'firefox build is missing browser_specific_settings.gecko.id (without it Firefox reports the xpi as corrupt)',
+      );
+    }
+    const dcp = gecko?.data_collection_permissions;
+    if (!dcp || !Array.isArray(dcp.required) || dcp.required.length === 0) {
+      errors.push(
+        'firefox build is missing browser_specific_settings.gecko.data_collection_permissions.required (AMO upload rejects without it; use ["none"] for extensions that collect no data)',
       );
     }
     const scripts = manifest.background?.scripts;
