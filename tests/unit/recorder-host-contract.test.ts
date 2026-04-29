@@ -20,7 +20,7 @@
 // start and stop are functions" -- see "RecorderHost shape" section).
 // ---------------------------------------------------------------------------
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type {
   RecorderHost,
   HostStartInput,
@@ -29,6 +29,74 @@ import type {
   Target,
 } from '../../src/recorder-host';
 import { selectHost } from '../../src/recorder-host';
+import {
+  createFirefoxBackgroundRecorderHost,
+  type FirefoxDeps,
+} from '../../src/recorder-host-firefox';
+import type { OffscreenToSW } from '../../src/types';
+import type { CreateRecorder, RecorderSession } from '../../src/offscreen-logic';
+
+// --- Firefox adapter test fixtures --------------------------------------------
+// Stubs for the FirefoxDeps port (FP test doubles -- pure functions, no mock
+// libraries beyond vi.fn for spying). createFirefoxBackgroundRecorderHost is
+// the adapter's driving port; we exercise it directly with these doubles.
+
+const createMockStream = (opts: { audioTracks: number; videoTracks: number }): MediaStream => {
+  const makeTrack = (kind: 'video' | 'audio'): MediaStreamTrack => {
+    const listeners = new Map<string, EventListener>();
+    return {
+      kind,
+      stop: vi.fn(),
+      addEventListener: (event: string, listener: EventListener) => {
+        listeners.set(event, listener);
+      },
+      removeEventListener: (event: string) => {
+        listeners.delete(event);
+      },
+      // Helper for tests to fire the 'ended' event:
+      __fireEnded: () => {
+        const listener = listeners.get('ended');
+        if (listener) listener(new Event('ended'));
+      },
+    } as unknown as MediaStreamTrack;
+  };
+  const audioTracks = Array.from({ length: opts.audioTracks }, () => makeTrack('audio'));
+  const videoTracks = Array.from({ length: opts.videoTracks }, () => makeTrack('video'));
+  const allTracks = [...videoTracks, ...audioTracks];
+  return {
+    getTracks: () => allTracks,
+    getAudioTracks: () => audioTracks,
+    getVideoTracks: () => videoTracks,
+  } as unknown as MediaStream;
+};
+
+const createMp4RecorderFactory = (): CreateRecorder =>
+  (_stream: MediaStream): RecorderSession => ({
+    stop: async () => new Blob(['fake-mp4-data'], { type: 'video/mp4' }),
+  });
+
+const createFailingMp4RecorderFactory = (): CreateRecorder =>
+  (_stream: MediaStream): RecorderSession => ({
+    stop: async () => {
+      throw new Error('Simulated mp4 mux failure');
+    },
+    webmFallback: async () => new Blob(['fake-webm-fallback'], { type: 'video/webm' }),
+  });
+
+const createDefaultFirefoxTestDeps = (
+  overrides: Partial<FirefoxDeps> = {},
+): FirefoxDeps => ({
+  getDisplayMedia: vi
+    .fn<(constraints: MediaStreamConstraints) => Promise<MediaStream>>()
+    .mockResolvedValue(createMockStream({ audioTracks: 1, videoTracks: 1 })),
+  storeRecording: vi.fn<(blob: Blob) => Promise<boolean>>().mockResolvedValue(false),
+  blobToDataUrl: vi
+    .fn<(blob: Blob) => Promise<string>>()
+    .mockResolvedValue('data:video/mp4;base64,fake-mp4'),
+  sendMessage: vi.fn<(message: OffscreenToSW) => void>(),
+  createRecorder: createMp4RecorderFactory(),
+  ...overrides,
+});
 
 // --- @property -- RecorderHost shape invariant ---------------------------------
 
@@ -51,11 +119,21 @@ describe('@property RecorderHost shape invariant for any selected target', () =>
 // --- AC-FF-02: picker cancellation is a non-error variant ----------------------
 
 describe('AC-FF-02 picker cancellation is non-error on the Firefox adapter', () => {
-  it.skip('FirefoxBackgroundRecorderHost.start returns { ok: false, cause: "picker-cancelled" } when the user cancels the picker', async () => {
-    // Driving port (boundary): selectHost('firefox').start({ target: 'firefox' })
+  it('FirefoxBackgroundRecorderHost.start returns { ok: false, cause: "picker-cancelled" } when the user cancels the picker', async () => {
+    // Driving port (boundary): createFirefoxBackgroundRecorderHost(deps).start
     // Observable outcome: ok=false, cause is the discriminated-union variant
     //                     'picker-cancelled' -- not a thrown error.
-    const host = selectHost('firefox');
+    const notAllowed: Error & { name: string } = Object.assign(
+      new Error('Permission denied by user'),
+      { name: 'NotAllowedError' },
+    );
+    const host = createFirefoxBackgroundRecorderHost(
+      createDefaultFirefoxTestDeps({
+        getDisplayMedia: vi
+          .fn<(constraints: MediaStreamConstraints) => Promise<MediaStream>>()
+          .mockRejectedValue(notAllowed),
+      }),
+    );
     const input: HostStartInput = { target: 'firefox' };
     const result: HostStartResult = await host.start(input);
     expect(result).toEqual({ ok: false, cause: 'picker-cancelled' });
@@ -74,8 +152,17 @@ describe('AC-FF-02 picker cancellation is non-error on the Firefox adapter', () 
 // --- AC-FF-01 / AC-FF-05: stop returns mp4 or webm-fallback shape -------------
 
 describe('AC-FF-01 / AC-FF-05 stop result shape parity across adapters', () => {
-  it.skip('FirefoxBackgroundRecorderHost.stop returns { ok: true, format: "mp4", dataUrl } on the happy path', async () => {
-    const host = selectHost('firefox');
+  it('FirefoxBackgroundRecorderHost.start returns { ok: true, hadAudioTrack: true } when getDisplayMedia yields an audio track', async () => {
+    // AC-FF-01: Given a stream with 1 video + 1 audio track, start resolves
+    // ok=true with hadAudioTrack=true. hadAudioTrack is computed from the
+    // captured MediaStream's audio tracks, observable at the port boundary.
+    const host = createFirefoxBackgroundRecorderHost(createDefaultFirefoxTestDeps());
+    const result: HostStartResult = await host.start({ target: 'firefox' });
+    expect(result).toEqual({ ok: true, hadAudioTrack: true });
+  });
+
+  it('FirefoxBackgroundRecorderHost.stop returns { ok: true, format: "mp4", dataUrl } on the happy path', async () => {
+    const host = createFirefoxBackgroundRecorderHost(createDefaultFirefoxTestDeps());
     await host.start({ target: 'firefox' });
     const result: HostStopResult = await host.stop();
     expect(result.ok).toBe(true);
@@ -86,16 +173,24 @@ describe('AC-FF-01 / AC-FF-05 stop result shape parity across adapters', () => {
     }
   });
 
-  it.skip('FirefoxBackgroundRecorderHost.stop returns { ok: false, cause: "mux-error", fallbackDataUrl } when mp4-mux fails (AC-FF-05 webm fallback)', async () => {
+  it('FirefoxBackgroundRecorderHost.stop returns { ok: false, cause: "mux-error", fallbackDataUrl } when mp4-mux fails (AC-FF-05 webm fallback)', async () => {
     // Observable outcome: the host surfaces a fallback dataUrl rather than
     // throwing -- the SW maps this onto the existing fallback-notice broadcast.
-    const host = selectHost('firefox');
+    const host = createFirefoxBackgroundRecorderHost(
+      createDefaultFirefoxTestDeps({
+        createRecorder: createFailingMp4RecorderFactory(),
+        blobToDataUrl: vi
+          .fn<(blob: Blob) => Promise<string>>()
+          .mockResolvedValue('data:video/webm;base64,fake-webm'),
+      }),
+    );
     await host.start({ target: 'firefox' });
     const result: HostStopResult = await host.stop();
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.cause).toBe('mux-error');
       expect(result.fallbackDataUrl).toBeDefined();
+      expect(result.fallbackDataUrl?.length).toBeGreaterThan(0);
     }
   });
 
