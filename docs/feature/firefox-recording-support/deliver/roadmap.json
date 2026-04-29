@@ -1,0 +1,173 @@
+{
+  "roadmap": {
+    "project_id": "firefox-recording-support",
+    "created_at": "2026-04-29T15:41:35Z",
+    "total_steps": 8,
+    "phases": 3
+  },
+  "phases": [
+    {
+      "id": "01",
+      "name": "Manifest pipeline + capability fork",
+      "description": "Land the foundational seams that let a Firefox build differ from a Chromium build at the manifest level and that let the popup announce which recording path is available. No runtime recording yet -- this phase makes Firefox installable without regressing Chrome and gives downstream code a typed witness (CapabilityCheckResult.path) to branch on.",
+      "dependencies": [],
+      "steps": [
+        {
+          "id": "01-01",
+          "name": "Pure permission-stripper for the Firefox manifest patch pipeline",
+          "description": "Implement scripts/strip-chrome-only-permissions.mjs as a pure function that removes the Chromium-only entries from a manifest's permissions array (driven by an exported CHROME_ONLY_PERMISSIONS list) without mutating its input, and wire it into scripts/patch-firefox-manifest.mjs. This is the first half of the AC-FF-08 / NFR-FF-01 guarantee.",
+          "criteria": "Given the Chromium src/manifest.json, when scripts/patch-firefox-manifest.mjs is run, then the emitted Firefox manifest declares no permissions beyond the original Chromium set (specifically: 'offscreen' and 'tabCapture' are stripped) AND the input manifest object passed to stripChromeOnlyPermissions is not mutated AND the Chromium build path emits a manifest byte-identical to the previous release. CHROME_ONLY_PERMISSIONS is exported and contains exactly ['offscreen','tabCapture'].",
+          "estimated_time": "60min",
+          "dependencies": [],
+          "files_to_modify": [
+            "scripts/strip-chrome-only-permissions.mjs",
+            "scripts/patch-firefox-manifest.mjs",
+            "tests/unit/manifest-patch-firefox-permissions.test.ts"
+          ],
+          "test_file": "tests/unit/manifest-patch-firefox-permissions.test.ts",
+          "scenario_name": "stripChromeOnlyPermissions removes Chromium-only permissions for the Firefox build (full 6-test suite incl. CHROME_ONLY_PERMISSIONS pin and Chromium-manifest-unchanged regression)"
+        },
+        {
+          "id": "01-02",
+          "name": "3-variant CapabilityCheckResult with feature-detect probe",
+          "description": "Widen src/popup-logic.ts's CapabilityCheckResult from a 2-variant boolean union to a 3-variant discriminated union with path: 'chromium-offscreen' | 'firefox-display-media' for the supported case, per data-models.md §2. Implementation is a pure feature-detect probe (chrome.offscreen + chrome.tabCapture first, navigator.mediaDevices.getDisplayMedia second, otherwise unsupported). Wire src/popup.ts to surface the same not-supported message as today when the result is unsupported.",
+          "criteria": "Given a fake globalThis exposing chrome.offscreen.createDocument and chrome.tabCapture.getMediaStreamId, when the probe runs, then it returns { supported: true, path: 'chromium-offscreen' }. Given a fake globalThis exposing only navigator.mediaDevices.getDisplayMedia, then it returns { supported: true, path: 'firefox-display-media' }. Given a fake globalThis with neither, then it returns { supported: false, reason: <human-readable string with no jargon> }. The popup never rejects a Firefox 121+ environment as unsupported (US-FF-01) and never reports Firefox-path on a Chromium environment.",
+          "estimated_time": "60min",
+          "dependencies": ["01-01"],
+          "files_to_modify": [
+            "src/popup-logic.ts",
+            "src/popup.ts",
+            "tests/unit/capability-check.test.ts"
+          ],
+          "test_file": "tests/unit/capability-check.test.ts",
+          "scenario_name": "checkRecordingCapability returns the 3-variant CapabilityCheckResult discriminated by path (full 5-test suite incl. Firefox-path detection, Chromium-path detection, neither -> unsupported, exhaustiveness pin)"
+        },
+        {
+          "id": "01-03",
+          "name": "RecorderHost port + ChromiumOffscreenRecorderHost adapter",
+          "description": "Land the RecorderHost port type (src/recorder-host.ts) per component-boundaries.md §3 and refactor the Chromium offscreen wiring in background.ts into the ChromiumOffscreenRecorderHost adapter (src/recorder-host-chromium.ts). This is a behavior-preserving refactor of the Chrome path: same offscreen-document lifecycle, same chrome.tabCapture.getMediaStreamId consumption, same mp4-mux + WebM fallback pipeline -- but now exposed through the start/stop port shape. No Firefox code yet.",
+          "criteria": "Given the Chromium adapter created with a fake chrome API, when start({ target: 'chromium', streamId: 'abc' }) is called, then it resolves with { ok: true, hadAudioTrack: true } and the offscreen document creation effect is invoked exactly once with the streamId reaching the offscreen-logic handler. When stop() is called after a successful start, then it resolves with { ok: true, format: 'mp4' | 'webm', dataUrl: <non-empty> } AND the offscreen document is closed exactly once. Sam's existing Chrome recording flow remains end-to-end functional (no behavioral change observable from the popup).",
+          "estimated_time": "90min",
+          "dependencies": ["01-02"],
+          "files_to_modify": [
+            "src/recorder-host.ts",
+            "src/recorder-host-chromium.ts",
+            "src/background.ts",
+            "tests/unit/recorder-host-contract.test.ts"
+          ],
+          "test_file": "tests/unit/recorder-host-contract.test.ts",
+          "scenario_name": "ChromiumOffscreenRecorderHost satisfies the RecorderHost port (Chromium half: start with streamId resolves ok+hadAudioTrack, stop resolves with mp4/webm dataUrl, port-shape pin)"
+        }
+      ]
+    },
+    {
+      "id": "02",
+      "name": "Firefox host + Chrome-path no-regression",
+      "description": "Implement the Firefox half of the RecorderHost port and the selectHost factory that wires popup -> target -> host. Lock the Chromium regression-guard walking skeleton green so any future divergence is caught at the AC-FF-06 / AC-FF-08 / AC-FF-09 boundary. End of this phase: Sam's Chrome flow is provably unchanged; the Firefox adapter exists and passes its contract tests against fakes (real Firefox runtime exercise comes in Phase 03).",
+      "dependencies": ["01"],
+      "steps": [
+        {
+          "id": "02-01",
+          "name": "FirefoxBackgroundRecorderHost adapter via composed offscreen-logic handler",
+          "description": "Implement src/recorder-host-firefox.ts as a factory returning a RecorderHost. The adapter composes createOffscreenMessageHandler from src/offscreen-logic.ts with a Firefox-flavored MediaAPIs whose getUserMedia calls navigator.mediaDevices.getDisplayMedia({video:true, audio:true}) and ignores the chromium-style constraints; storeRecording / blobToDataUrl / sendMessage are reused unchanged. Picker cancellation (NotAllowedError) is mapped to { ok: false, cause: 'picker-cancelled' } per D10. hadAudioTrack is computed from the captured MediaStream's audio tracks at start. A track.ended listener is attached and triggers the same stop-and-download path as an explicit stop().",
+          "criteria": "Given a fake navigator.mediaDevices.getDisplayMedia that resolves with a stream containing 1 video + 1 audio track, when start({ target: 'firefox' }) is called, then it resolves with { ok: true, hadAudioTrack: true }. Given the fake getDisplayMedia rejects with NotAllowedError, then start resolves with { ok: false, cause: 'picker-cancelled' } (NOT a thrown error). Given a successful start followed by stop(), then stop resolves with { ok: true, format: 'mp4' | 'webm', dataUrl: <non-empty> } AND if the underlying mp4-mux fake throws then stop resolves with { ok: false, cause: 'mux-error', fallbackDataUrl: <non-empty> }. Given track.ended fires on the captured stream, then the same stop-and-download flow runs as if stop() had been called.",
+          "estimated_time": "90min",
+          "dependencies": ["01-03"],
+          "files_to_modify": [
+            "src/recorder-host-firefox.ts",
+            "tests/unit/recorder-host-contract.test.ts"
+          ],
+          "test_file": "tests/unit/recorder-host-contract.test.ts",
+          "scenario_name": "FirefoxBackgroundRecorderHost satisfies the RecorderHost port (Firefox half: start returns hadAudioTrack from the captured stream, picker-cancelled is non-error, stop fallback on mux-error, single-branch parity)"
+        },
+        {
+          "id": "02-02",
+          "name": "selectHost factory in background.ts and popup-logic path field",
+          "description": "Add the selectHost(target) factory in src/background.ts -- the single target branch in the codebase, per D16. Wire src/popup.ts so the start-recording message includes the path discriminant (chromium-offscreen with streamId vs firefox-display-media with no streamId), per data-models.md §3. Background reads the path from the first start-recording message, calls selectHost once, and dispatches start/stop on the resulting RecorderHost. Pure logic in popup-logic.ts and background-logic.ts gains no new branches on target.",
+          "criteria": "Given a popup with capability { supported: true, path: 'chromium-offscreen' }, when Start is clicked, then the popup sends { type: 'start-recording', path: 'chromium-offscreen', streamId: <id> } AND the background invokes the Chromium adapter exactly once. Given a popup with capability { supported: true, path: 'firefox-display-media' }, when Start is clicked, then the popup sends { type: 'start-recording', path: 'firefox-display-media' } (no streamId) AND the background invokes the Firefox adapter exactly once. selectHost is the only target-branching code site in the project (verifiable via grep / dependency-cruiser).",
+          "estimated_time": "75min",
+          "dependencies": ["02-01"],
+          "files_to_modify": [
+            "src/background.ts",
+            "src/popup.ts",
+            "src/popup-logic.ts",
+            "src/types.ts",
+            "tests/unit/recorder-host-contract.test.ts"
+          ],
+          "test_file": "tests/unit/recorder-host-contract.test.ts",
+          "scenario_name": "selectHost picks the right RecorderHost adapter for each Target (Chromium target -> ChromiumOffscreenRecorderHost; Firefox target -> FirefoxBackgroundRecorderHost; the two are not the same instance)"
+        },
+        {
+          "id": "02-03",
+          "name": "Walking-skeleton Chromium acceptance suite green (regression guard)",
+          "description": "Un-skip and pass the 5 Strategy-C Playwright scenarios in tests/acceptance/firefox-recording-support/walking-skeleton.spec.ts. These run a real Chromium-loaded extension and assert: (1) Sam never sees the Firefox surface-picker hint, (2) Sam records a tab end-to-end and gets a broshow-YYYY-MM-DD-HHmmss.mp4 in Downloads, (3) zero outbound network requests during a complete flow (AC-FF-09), (4) src/manifest.json declares no new permissions vs the prior release, (5) the dist Firefox manifest declares no new permissions vs the dist Chromium manifest. This is the AC-FF-06 / AC-FF-08 / AC-FF-09 regression-guard for the new RecorderHost abstraction.",
+          "criteria": "All 5 scenarios in tests/acceptance/firefox-recording-support/walking-skeleton.spec.ts pass against a real Chromium build via Playwright. The Chrome-path filename pattern broshow-YYYY-MM-DD-HHmmss.mp4 still matches AC-FF-10 (Chrome side). Network panel observed during the full record/stop/download flow shows zero outbound requests. Source manifest and dist Firefox manifest both stay within the original permission set. Litmus test (Mandate 9d): deleting selectHost causes scenarios 1 and 2 to fail.",
+          "estimated_time": "75min",
+          "dependencies": ["02-02"],
+          "files_to_modify": [
+            "tests/acceptance/firefox-recording-support/walking-skeleton.spec.ts"
+          ],
+          "test_file": "tests/acceptance/firefox-recording-support/walking-skeleton.spec.ts",
+          "scenario_name": "Chromium walking-skeleton regression-guard suite (Sam does not see Firefox hint; Sam records tab end-to-end with broshow-* filename; zero outbound requests; src manifest unchanged; dist Firefox manifest stripped of Chromium-only permissions)"
+        }
+      ]
+    },
+    {
+      "id": "03",
+      "name": "Firefox runtime + smoke",
+      "description": "Configure the Firefox-specific manifest entries (browser_specific_settings + background.scripts event-page configuration) so the Firefox build actually loads the FirefoxBackgroundRecorderHost adapter on Firefox 121+, then execute the S-1/S-2 spikes and convert the firefox-host-smoke.spec.ts skipped markers into either programmatic checks (where automatable) or documented matrix-pinned manual entries.",
+      "dependencies": ["02"],
+      "steps": [
+        {
+          "id": "03-01",
+          "name": "Firefox manifest event-page wiring + S-1/S-2 spikes",
+          "description": "Update src/manifest.json (and the patcher in scripts/patch-firefox-manifest.mjs) so the patched Firefox manifest declares browser_specific_settings.gecko (Firefox 121+ minimum) and a background.scripts entry that loads the bundled background script as an MV3 event page. Run S-1 (validate that getDisplayMedia honors the user-gesture chain when invoked from the background event page after a popup-forwarded start-recording message on Firefox 121 ESR) and S-2 (confirm an active MediaRecorder keeps the event page alive for >= 5 minutes without an explicit heartbeat). Record outcomes in docs/feature/firefox-recording-support/deliver/spikes.md or equivalent. If S-1 fails, escalate per ADR-003 fallback to Option B before continuing -- do NOT silently work around.",
+          "criteria": "Given the Firefox build, when the add-on is loaded in Firefox 121+, then the background event page runs the bundled background script (visible via about:debugging). Given Maria clicks Start in the popup on Firefox 121 ESR, when the background event page receives the start-recording message, then navigator.mediaDevices.getDisplayMedia() resolves (or rejects with NotAllowedError on user cancel) -- it does NOT reject with InvalidStateError or 'gesture required' (S-1 PASS). Given an active MediaRecorder, when 5 minutes elapse with no popup interaction, then the event page is still alive and recording continues (S-2 PASS) -- otherwise a no-op heartbeat is added inside recorder-host-firefox.ts. The patched Firefox manifest still declares no new permissions (AC-FF-08 holds).",
+          "estimated_time": "90min",
+          "dependencies": ["02-03"],
+          "files_to_modify": [
+            "src/manifest.json",
+            "scripts/patch-firefox-manifest.mjs",
+            "src/recorder-host-firefox.ts"
+          ],
+          "test_file": "tests/unit/manifest-patch-firefox-permissions.test.ts",
+          "scenario_name": "Patched Firefox manifest declares browser_specific_settings.gecko and background.scripts while preserving the original permission set (composed patcher pipeline, scenario 29)"
+        },
+        {
+          "id": "03-02",
+          "name": "Firefox smoke spec activated against runtime + manual matrix pins",
+          "description": "Walk through tests/acceptance/firefox-recording-support/firefox-host-smoke.spec.ts and, for each of the 7 scenarios (AC-FF-01..05, AC-FF-07, AC-FF-10), either un-skip it as a programmatic web-ext-driven check where feasible OR replace the skip with a documented pointer to the corresponding manual-matrix row in docs/feature/firefox-recording-support/discuss/outcome-kpis.md. Execute the manual matrix once on Firefox 121 ESR + Firefox stable and record outcomes. The Chrome path remains green (no regression).",
+          "criteria": "Every scenario in tests/acceptance/firefox-recording-support/firefox-host-smoke.spec.ts either passes against a real Firefox runtime via web-ext OR is explicitly skipped with @manual-fallback AND a comment pointing at the outcome-kpis.md matrix row. The manual matrix is executed once: AC-FF-01 (mp4 download with audio) PASS, AC-FF-02 (cancel is no-op, no toast, no badge) PASS, AC-FF-03 (5-minute survival without popup interaction) PASS, AC-FF-04 (track.ended via native Stop sharing produces download) PASS, AC-FF-05 (webm fallback when mp4-mux fails) PASS, AC-FF-07 (capability probe still blocks unsupported browsers) PASS, AC-FF-10 (filename parity Firefox <-> Chrome) PASS. The Chromium walking-skeleton suite from 02-03 still passes unchanged.",
+          "estimated_time": "75min",
+          "dependencies": ["03-01"],
+          "files_to_modify": [
+            "tests/acceptance/firefox-recording-support/firefox-host-smoke.spec.ts"
+          ],
+          "test_file": "tests/acceptance/firefox-recording-support/firefox-host-smoke.spec.ts",
+          "scenario_name": "Firefox-host smoke spec exercises every Firefox-side AC against a real Firefox runtime (mp4 happy path AC-FF-01; picker-cancelled no-op AC-FF-02; 5-minute popup-closed survival AC-FF-03; native Stop sharing AC-FF-04; webm fallback AC-FF-05; unsupported-browser block AC-FF-07; filename parity AC-FF-10)"
+        }
+      ]
+    }
+  ],
+  "implementation_scope": {
+    "source_directories": [
+      "src/",
+      "scripts/"
+    ],
+    "test_directories": [
+      "tests/unit/",
+      "tests/acceptance/firefox-recording-support/"
+    ],
+    "excluded_patterns": [
+      "node_modules/**",
+      "dist/**",
+      "dist-firefox/**",
+      "**/*.d.ts"
+    ]
+  },
+  "validation": {
+    "status": "pending",
+    "reviewer": "solution-architect-reviewer",
+    "approved_at": "TODO"
+  }
+}
