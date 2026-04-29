@@ -93,10 +93,8 @@ export const createDefaultFirefoxDeps = (
     navigator.mediaDevices.getDisplayMedia(constraints),
 
   storeRecording: async (blob: Blob) => {
+    console.log('[ff-host] storeRecording: enter, blob size', blob.size, 'type', blob.type);
     try {
-      // Match the chromium adapter's storage contract so background-logic.ts
-      // can read the dataUrl back from chrome.storage.local. Strip codec
-      // params from the MIME type to keep the data URL syntactically valid.
       const simpleMime = blob.type.split(';')[0] || 'video/webm';
       const cleanBlob = new Blob([blob], { type: simpleMime });
       const reader = new FileReader();
@@ -105,16 +103,21 @@ export const createDefaultFirefoxDeps = (
         reader.onerror = () => reject(new Error('Failed to read blob'));
         reader.readAsDataURL(cleanBlob);
       });
+      console.log('[ff-host] storeRecording: dataUrl built, length', dataUrl.length);
       await chrome.storage.local.set({ recordingData: dataUrl });
+      console.log('[ff-host] storeRecording: storage.local.set OK');
       return true;
-    } catch {
+    } catch (e) {
+      console.log('[ff-host] storeRecording: FAILED', e);
       return false;
     }
   },
 
   getRecordingData: async () => {
     const result = await chrome.storage.local.get('recordingData');
-    return (result.recordingData as string) ?? null;
+    const value = (result.recordingData as string) ?? null;
+    console.log('[ff-host] getRecordingData:', value === null ? 'NULL' : `length=${value.length}`);
+    return value;
   },
 
   blobToDataUrl: (blob: Blob) =>
@@ -177,26 +180,29 @@ export const createFirefoxBackgroundRecorderHost = (
   // Maps the OffscreenToSW response from the handler to the RecorderHost
   // port shape. Parity with createChromiumOffscreenRecorderHost.stop.
   const stop = async (): Promise<HostStopResult> => {
+    console.log('[ff-host] stop: enter');
     try {
       const response = await handleMessage({ type: 'offscreen-stop' });
+      console.log('[ff-host] stop: handler response', response === undefined ? 'undefined' : JSON.stringify({ type: response.type, hasDataUrl: 'dataUrl' in response && !!(response as { dataUrl?: string }).dataUrl, hasFallback: 'fallbackDataUrl' in response && !!(response as { fallbackDataUrl?: string }).fallbackDataUrl }));
       if (response === undefined) {
         return { ok: false, cause: 'mux-error' };
       }
       if (response.type === 'offscreen-result') {
-        // The handler omits dataUrl when storeRecording succeeds (chrome.storage
-        // path) and inlines it on the message when storage fails. Mirror the
-        // chromium adapter's fallback: prefer message → storage → empty.
-        const dataUrl =
-          response.dataUrl ?? (await deps.getRecordingData()) ?? '';
+        const fromMessage = response.dataUrl;
+        const fromStorage = fromMessage ? null : await deps.getRecordingData();
+        const dataUrl = fromMessage ?? fromStorage ?? '';
+        console.log('[ff-host] stop: offscreen-result resolved dataUrl source=' + (fromMessage ? 'message' : fromStorage ? 'storage' : 'NONE') + ' length=' + dataUrl.length);
         return { ok: true, format: response.format, dataUrl };
       }
       if (response.type === 'offscreen-error') {
+        console.log('[ff-host] stop: offscreen-error error=' + (response as { error: string }).error + ' hasFallback=' + (response.fallbackDataUrl !== undefined));
         return response.fallbackDataUrl !== undefined
           ? { ok: false, cause: 'mux-error', fallbackDataUrl: response.fallbackDataUrl }
           : { ok: false, cause: 'mux-error' };
       }
       return { ok: false, cause: 'mux-error' };
-    } catch {
+    } catch (e) {
+      console.log('[ff-host] stop: THREW', e);
       return { ok: false, cause: 'mux-error' };
     }
   };

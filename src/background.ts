@@ -95,8 +95,11 @@ const chromeAPIs: ChromeAPIs = {
   // doc auto-receives via URL on Chromium and is irrelevant on Firefox).
   sendMessageToOffscreen: async (message: SWToOffscreen) => {
     if (message.type === 'offscreen-stop') {
+      console.log('[sw] sendMessageToOffscreen: routing offscreen-stop to host', selectedHost.target);
       const hostResult = await selectedHost.host.stop();
-      return hostResultToOffscreenMessage(hostResult);
+      const offscreenMsg = hostResultToOffscreenMessage(hostResult);
+      console.log('[sw] sendMessageToOffscreen: host returned', JSON.stringify({ ok: hostResult.ok, cause: !hostResult.ok ? hostResult.cause : undefined }), '-> offscreen msg type', offscreenMsg.type);
+      return offscreenMsg;
     }
     return chromiumDeps.sendMessageToOffscreen(message);
   },
