@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g., v0.1.0). Must already exist or will be created on the current commit.'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build extension
+        run: npm run build
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify manifest version matches tag
+        run: |
+          MANIFEST_VERSION=$(node -p "require('./dist/manifest.json').version")
+          if [ "$MANIFEST_VERSION" != "${{ steps.version.outputs.version }}" ]; then
+            echo "::error::manifest.json version ($MANIFEST_VERSION) does not match release tag (${{ steps.version.outputs.version }})"
+            exit 1
+          fi
+
+      - name: Package Chrome zip
+        run: |
+          cd dist
+          zip -r "../broshow-chrome-${{ steps.version.outputs.version }}.zip" .
+
+      - name: Package Firefox xpi
+        run: |
+          cd dist
+          zip -r "../broshow-firefox-${{ steps.version.outputs.version }}.xpi" .
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            broshow-chrome-${{ steps.version.outputs.version }}.zip
+            broshow-firefox-${{ steps.version.outputs.version }}.xpi
