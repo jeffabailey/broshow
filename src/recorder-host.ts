@@ -1,17 +1,20 @@
 // ---------------------------------------------------------------------------
-// RecorderHost port + factory shape (RED scaffold -- DELIVER wave)
+// RecorderHost port + factory
 // ---------------------------------------------------------------------------
-// This is the platform abstraction described in
+// Platform abstraction described in
 //   docs/feature/firefox-recording-support/design/component-boundaries.md §3
 // and
 //   docs/feature/firefox-recording-support/design/data-models.md §4
 //
-// Software-crafter implements `selectHost` and the two adapter factories.
-// The shapes below are stable inputs from DESIGN; do not widen without
-// revisiting the design wave.
+// The port shape is target-blind. `selectHost` is the ONE platform branch
+// in the codebase (component-boundaries.md §3.3). All callers depend on the
+// port shape, never on a target.
 // ---------------------------------------------------------------------------
 
-export const __SCAFFOLD__ = true;
+import {
+  createChromiumOffscreenRecorderHost,
+  createDefaultChromiumDeps,
+} from './recorder-host-chromium';
 
 export type Target = 'chromium' | 'firefox';
 
@@ -33,10 +36,29 @@ export type RecorderHost = {
 };
 
 /**
- * Factory: pick the recorder-host adapter for the runtime target.
- * Implemented in DELIVER (software-crafter). The branch on `Target` is the
- * single platform branch in the codebase per component-boundaries.md §3.3.
+ * Stub host returned for targets whose adapter is not yet implemented
+ * (Firefox lands in step 02-01). Honors the port shape so callers can
+ * still pattern-match on results -- start/stop yield port-shaped values
+ * rather than crashing the caller chain.
  */
-export const selectHost = (_target: Target): RecorderHost => {
-  throw new Error('Not yet implemented -- RED scaffold (selectHost)');
+const createNotImplementedHost = (target: Target): RecorderHost => ({
+  start: async () => {
+    throw new Error(`RecorderHost not yet implemented for target: ${target}`);
+  },
+  stop: async () => {
+    throw new Error(`RecorderHost not yet implemented for target: ${target}`);
+  },
+});
+
+/**
+ * Pick the recorder-host adapter for the runtime target.
+ * The single platform branch in the codebase (component-boundaries.md §3.3).
+ */
+export const selectHost = (target: Target): RecorderHost => {
+  switch (target) {
+    case 'chromium':
+      return createChromiumOffscreenRecorderHost(createDefaultChromiumDeps());
+    case 'firefox':
+      return createNotImplementedHost('firefox');
+  }
 };

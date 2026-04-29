@@ -40,7 +40,7 @@ describe('@property RecorderHost shape invariant for any selected target', () =>
   const ALL_TARGETS: ReadonlyArray<Target> = ['chromium', 'firefox'];
 
   for (const target of ALL_TARGETS) {
-    it.skip(`selectHost(${JSON.stringify(target)}) returns a host whose start and stop are callable`, () => {
+    it(`selectHost(${JSON.stringify(target)}) returns a host whose start and stop are callable`, () => {
       const host: RecorderHost = selectHost(target);
       expect(typeof host.start).toBe('function');
       expect(typeof host.stop).toBe('function');
@@ -61,7 +61,7 @@ describe('AC-FF-02 picker cancellation is non-error on the Firefox adapter', () 
     expect(result).toEqual({ ok: false, cause: 'picker-cancelled' });
   });
 
-  it.skip('ChromiumOffscreenRecorderHost.start returns { ok: true, hadAudioTrack: true } on the happy path', async () => {
+  it('ChromiumOffscreenRecorderHost.start returns { ok: true, hadAudioTrack: true } on the happy path', async () => {
     // Observable outcome: tabCapture-derived MediaStream always carries audio
     //                     on Chromium today (data-models.md §4.1).
     const host = selectHost('chromium');
@@ -99,7 +99,7 @@ describe('AC-FF-01 / AC-FF-05 stop result shape parity across adapters', () => {
     }
   });
 
-  it.skip('ChromiumOffscreenRecorderHost.stop returns the same HostStopResult shape as the Firefox adapter (AC-FF-06 parity)', async () => {
+  it('ChromiumOffscreenRecorderHost.stop returns the same HostStopResult shape as the Firefox adapter (AC-FF-06 parity)', async () => {
     const host = selectHost('chromium');
     await host.start({ target: 'chromium', streamId: 'stream-x' });
     const result: HostStopResult = await host.stop();
@@ -111,7 +111,7 @@ describe('AC-FF-01 / AC-FF-05 stop result shape parity across adapters', () => {
 // --- AC-FF-06: only one platform branch lives in selectHost --------------------
 
 describe('AC-FF-06 selectHost is the single platform branch', () => {
-  it.skip('selectHost("chromium") and selectHost("firefox") return distinct adapter instances', () => {
+  it('selectHost("chromium") and selectHost("firefox") return distinct adapter instances', () => {
     const chromiumHost = selectHost('chromium');
     const firefoxHost = selectHost('firefox');
     // Observable: two different host objects -- proves the branch dispatched.

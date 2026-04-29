@@ -3,11 +3,42 @@
 // ---------------------------------------------------------------------------
 // This module wires chrome APIs to the pure background logic.
 // All side effects (chrome.*, console.*) live here at the edge.
+//
+// Per docs/feature/firefox-recording-support/design/component-boundaries.md §3
+// the offscreen-document lifecycle (create/stop/close) is encapsulated by the
+// ChromiumOffscreenRecorderHost adapter. The state-machine logic stays in
+// createMessageHandler; only the offscreen-effect calls are routed through
+// the adapter so a sibling adapter (FirefoxBackgroundRecorderHost, step 02-01)
+// can plug in without touching the pure core.
 // ---------------------------------------------------------------------------
 
-import type { SWToOffscreen, Message } from './types';
+import type { OffscreenToSW, SWToOffscreen, Message } from './types';
 import { createMessageHandler } from './background-logic';
 import type { ChromeAPIs } from './background-logic';
+import {
+  createChromiumOffscreenRecorderHost,
+  createDefaultChromiumDeps,
+} from './recorder-host-chromium';
+import type { HostStopResult } from './recorder-host';
+
+// --- Chromium offscreen recorder host (port-routed effects) ---------------
+
+const chromiumDeps = createDefaultChromiumDeps();
+const chromiumHost = createChromiumOffscreenRecorderHost(chromiumDeps);
+
+/**
+ * Convert a HostStopResult back to the OffscreenToSW shape that
+ * createMessageHandler already knows how to handle. Keeps the SW state
+ * machine target-blind.
+ */
+const hostResultToOffscreenMessage = (result: HostStopResult): OffscreenToSW => {
+  if (result.ok) {
+    return { type: 'offscreen-result', format: result.format, dataUrl: result.dataUrl };
+  }
+  return result.fallbackDataUrl !== undefined
+    ? { type: 'offscreen-error', error: 'Mp4 conversion failed', fallbackDataUrl: result.fallbackDataUrl }
+    : { type: 'offscreen-error', error: 'Mp4 conversion failed' };
+};
 
 // --- Chrome API adapters ---------------------------------------------------
 
@@ -18,40 +49,38 @@ const chromeAPIs: ChromeAPIs = {
     return tab?.id != null ? { id: tab.id } : null;
   },
 
+  // start-recording effect routed through chromiumHost.start so the SW state
+  // machine stays target-blind. Returns void to match the existing port shape.
   createOffscreenDocument: async (streamId: string) => {
-    const stored = await chrome.storage.local.get('forceWebmFallback');
-    const forceFlag = stored.forceWebmFallback === true ? '&forceWebmFallback=1' : '';
-    if (forceFlag) {
-      // Clear the flag so it only applies once per test.
-      await chrome.storage.local.remove('forceWebmFallback');
-    }
-    return chrome.offscreen.createDocument({
-      url: `offscreen.html?streamId=${encodeURIComponent(streamId)}${forceFlag}`,
-      reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.DISPLAY_MEDIA, chrome.offscreen.Reason.BLOBS],
-      justification: 'Recording tab audio/video and converting blob to data URL',
-    });
-  },
-
-  closeOffscreenDocument: async () => {
-    try {
-      await chrome.offscreen.closeDocument();
-    } catch {
-      // Document may have been auto-closed by Chrome already
+    const result = await chromiumHost.start({ target: 'chromium', streamId });
+    if (!result.ok) {
+      // Picker-cancelled is a Firefox concern; on Chromium start always
+      // resolves with ok:true. Defensive throw if a future change breaks
+      // that invariant.
+      throw new Error(`ChromiumOffscreenRecorderHost.start failed: ${result.cause}`);
     }
   },
 
-  sendMessageToOffscreen: (message: SWToOffscreen) =>
-    chrome.runtime.sendMessage(message),
+  closeOffscreenDocument: chromiumDeps.closeOffscreenDocument,
+
+  // stop-recording effect routed through chromiumHost.stop, which encapsulates
+  // sendMessage + response shaping. Other SW->offscreen messages bypass the
+  // host (none today; offscreen-stop is the only message in SWToOffscreen
+  // besides offscreen-start, which the offscreen doc auto-receives via URL).
+  sendMessageToOffscreen: async (message: SWToOffscreen) => {
+    if (message.type === 'offscreen-stop') {
+      const hostResult = await chromiumHost.stop();
+      return hostResultToOffscreenMessage(hostResult);
+    }
+    return chromiumDeps.sendMessageToOffscreen(message);
+  },
 
   downloadFile: async (url: string, filename: string) => {
     console.log('[sw] downloadFile called:', url.slice(0, 80), filename);
     await chrome.downloads.download({ url, filename });
   },
 
-  getRecordingData: async () => {
-    const result = await chrome.storage.local.get('recordingData');
-    return (result.recordingData as string) ?? null;
-  },
+  getRecordingData: chromiumDeps.getRecordingData,
 
   clearRecordingData: () => chrome.storage.local.remove('recordingData'),
 
