@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BroShow",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Record a browser tab and save as mp4",
   "permissions": [
     "tabCapture",

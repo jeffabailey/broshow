@@ -1,11 +1,19 @@
 // ---------------------------------------------------------------------------
 // Popup entry point -- wires pure logic to DOM and chrome APIs
 // ---------------------------------------------------------------------------
-// This is the "effects at boundaries" adapter. All logic lives in popup-logic.
+// Two distinct paths converge here:
 //
-// The popup holds the user gesture context required by
-// chrome.tabCapture.getMediaStreamId(). The streamId is obtained here when
-// the user clicks Start, then passed through the message to the service worker.
+// 1. Chromium offscreen: tabCapture streamId is acquired in the popup's
+//    user-gesture window, then forwarded through start-recording to the SW
+//    which orchestrates the offscreen document.
+//
+// 2. Firefox display-media: getDisplayMedia must be invoked from within the
+//    popup's user-gesture click handler -- a Firefox MV3 background event
+//    page does NOT carry the gesture across runtime.sendMessage. So the
+//    popup hosts the entire recording lifecycle locally (getDisplayMedia +
+//    MediaRecorder + mp4-muxer + chrome.downloads.download). The SW is
+//    bypassed for Firefox. Trade-off: closing the popup terminates the
+//    recording. Documented in popup status copy.
 // ---------------------------------------------------------------------------
 
 import {
@@ -14,17 +22,10 @@ import {
   type CapabilityCheckResult,
   type ProbeGlobals,
 } from './popup-logic';
+import { createRecordingSession } from './mp4';
+import { formatRecordingFilename } from './background-logic';
 import type { PopupToSW, SWToPopup } from './types';
 
-/**
- * Adapter for the pure feature-detect probe. The probe itself lives in
- * `popup-logic.ts` and is fully pure -- this thin wrapper supplies the real
- * `globalThis` so the probe can inspect runtime APIs.
- *
- * Order is intentional (Chromium first, Firefox second, otherwise unsupported)
- * and lives inside the pure probe; see
- * `docs/feature/firefox-recording-support/design/data-models.md` §2.3.
- */
 const checkRecordingCapability = (): CapabilityCheckResult =>
   detectRecordingCapability(globalThis as ProbeGlobals);
 
@@ -32,18 +33,112 @@ const button = document.getElementById('action-button') as HTMLButtonElement;
 const status = document.getElementById('status') as HTMLParagraphElement;
 const fallbackNotice = document.getElementById('fallback-notice') as HTMLParagraphElement;
 
+// --- Firefox popup-hosted recorder ----------------------------------------
+// Lives entirely inside the popup. Closing the popup ends the recording.
+
+type FirefoxState = 'idle' | 'recording' | 'processing';
+
+const blobToDataUrl = (blob: Blob): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error('Failed to read blob'));
+    reader.readAsDataURL(blob);
+  });
+
+const setupFirefoxPopupRecorder = (
+  buttonEl: HTMLButtonElement,
+  statusEl: HTMLParagraphElement,
+): void => {
+  let stream: MediaStream | null = null;
+  let session: ReturnType<typeof createRecordingSession> | null = null;
+  let state: FirefoxState = 'idle';
+
+  const renderUI = (): void => {
+    switch (state) {
+      case 'idle':
+        buttonEl.textContent = 'Start Recording';
+        buttonEl.disabled = false;
+        statusEl.textContent = 'Ready to record. Keep this popup open while recording.';
+        break;
+      case 'recording':
+        buttonEl.textContent = 'Stop Recording';
+        buttonEl.disabled = false;
+        statusEl.textContent = 'Recording... Do not close this popup.';
+        break;
+      case 'processing':
+        buttonEl.textContent = 'Processing...';
+        buttonEl.disabled = true;
+        statusEl.textContent = 'Processing recording...';
+        break;
+    }
+  };
+
+  const startRecording = async (): Promise<void> => {
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      session = createRecordingSession(stream);
+      state = 'recording';
+      renderUI();
+    } catch (error) {
+      const e = error as Error;
+      if (e?.name === 'NotAllowedError') {
+        // User cancelled the picker — silent return to idle.
+        statusEl.textContent = 'Recording cancelled.';
+      } else {
+        statusEl.textContent = `Error: ${e?.message ?? 'failed to start recording'}`;
+      }
+      state = 'idle';
+      buttonEl.disabled = false;
+      buttonEl.textContent = 'Start Recording';
+    }
+  };
+
+  const stopRecording = async (): Promise<void> => {
+    if (!session || !stream) return;
+
+    state = 'processing';
+    renderUI();
+
+    const currentSession = session;
+    const currentStream = stream;
+    session = null;
+    stream = null;
+
+    try {
+      const blob = await currentSession.stop();
+      const dataUrl = await blobToDataUrl(blob);
+      const format = blob.type.includes('mp4') ? 'mp4' : 'webm';
+      const filename = formatRecordingFilename(new Date(), format);
+      await chrome.downloads.download({ url: dataUrl, filename });
+      statusEl.textContent = `Saved ${filename}`;
+    } catch (error) {
+      const e = error as Error;
+      statusEl.textContent = `Error: ${e?.message ?? 'failed to save recording'}`;
+    } finally {
+      currentStream.getTracks().forEach((t) => t.stop());
+      state = 'idle';
+      buttonEl.textContent = 'Start Recording';
+      buttonEl.disabled = false;
+    }
+  };
+
+  buttonEl.addEventListener('click', async () => {
+    if (state === 'idle') {
+      await startRecording();
+    } else if (state === 'recording') {
+      await stopRecording();
+    }
+  });
+
+  renderUI();
+};
+
+// --- Chromium path adapters (existing) ------------------------------------
+
 const sendMessage = (message: PopupToSW): Promise<SWToPopup> =>
   chrome.runtime.sendMessage(message);
 
-/**
- * Find the target tab to capture. The active tab in the current window is the
- * tab the user has focused; in the real popup overlay this is the content tab.
- * If `chrome.tabCapture.getMediaStreamId` is later called against an
- * uncapturable target (e.g., a chrome:// page), Chrome rejects with a clear
- * error that the caller surfaces to the user — we don't filter URLs here, and
- * we don't request the `tabs` or `activeTab` permission to read tab metadata
- * (per `design/technology-stack.md` Permissions section).
- */
 const getTargetTabId = async (): Promise<number> => {
   const activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
   const activeTab = activeTabs[0];
@@ -56,13 +151,11 @@ const getStreamId = async (): Promise<string> => {
     const targetTabId = await getTargetTabId();
     return await chrome.tabCapture.getMediaStreamId({ targetTabId });
   } catch {
-    // In test environments, tabCapture may not be available.
-    // Return empty streamId; the offscreen doc will fall back to getDisplayMedia.
     return '';
   }
 };
 
-const onMessage = (handler: (message: import('./types').SWToPopup) => void) => {
+const onMessage = (handler: (message: SWToPopup) => void) => {
   chrome.runtime.onMessage.addListener((message) => {
     if (message.type === 'state-update' || message.type === 'error' || message.type === 'fallback-notice') {
       handler(message);
@@ -70,12 +163,20 @@ const onMessage = (handler: (message: import('./types').SWToPopup) => void) => {
   });
 };
 
-initializePopup(
-  button,
-  status,
-  sendMessage,
-  getStreamId,
-  onMessage,
-  fallbackNotice,
-  checkRecordingCapability,
-);
+// --- Path dispatch ---------------------------------------------------------
+
+const capability = checkRecordingCapability();
+
+if (capability.supported && capability.path === 'firefox-display-media') {
+  setupFirefoxPopupRecorder(button, status);
+} else {
+  initializePopup(
+    button,
+    status,
+    sendMessage,
+    getStreamId,
+    onMessage,
+    fallbackNotice,
+    () => capability,
+  );
+}
