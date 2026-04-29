@@ -46,7 +46,7 @@ const idleStateUpdate = (): SWToPopup => ({
 // ---------------------------------------------------------------------------
 
 describe('AC-FF-06 popup behavior when capability probe reports chromium-offscreen', () => {
-  it.skip('shows the Start Recording button enabled (via initializePopup)', async () => {
+  it('shows the Start Recording button enabled (via initializePopup)', async () => {
     const button = makeButton();
     const status = makeStatus();
     const hint = makeFirefoxHint();
@@ -75,7 +75,7 @@ describe('AC-FF-06 popup behavior when capability probe reports chromium-offscre
     expect(status.textContent).toBe('Ready to record');
   });
 
-  it.skip('keeps the Firefox surface-picker hint hidden (AC-FF-06 -- via initializePopup)', async () => {
+  it('keeps the Firefox surface-picker hint hidden (AC-FF-06 -- via initializePopup)', async () => {
     const button = makeButton();
     const status = makeStatus();
     const hint = makeFirefoxHint();
@@ -103,7 +103,7 @@ describe('AC-FF-06 popup behavior when capability probe reports chromium-offscre
 // ---------------------------------------------------------------------------
 
 describe('AC-FF-04 / US-FF-01 popup behavior when capability probe reports firefox-display-media', () => {
-  it.skip('shows the Start Recording button enabled and the surface-picker hint visible (via initializePopup)', async () => {
+  it('shows the Start Recording button enabled and the surface-picker hint visible (via initializePopup)', async () => {
     const button = makeButton();
     const status = makeStatus();
     const hint = makeFirefoxHint();
@@ -134,7 +134,7 @@ describe('AC-FF-04 / US-FF-01 popup behavior when capability probe reports firef
 // ---------------------------------------------------------------------------
 
 describe('AC-FF-07 popup behavior when capability probe reports unsupported', () => {
-  it.skip('shows the unsupported message and disables the Start button (via initializePopup)', async () => {
+  it('shows the unsupported message and disables the Start button (via initializePopup)', async () => {
     const button = makeButton();
     const status = makeStatus();
     const hint = makeFirefoxHint();
@@ -171,7 +171,7 @@ describe('AC-FF-07 popup behavior when capability probe reports unsupported', ()
 // ---------------------------------------------------------------------------
 
 describe('CapabilityCheckResult discriminated union exhaustiveness', () => {
-  it.skip('exactly three variants are recognized', () => {
+  it('exactly three variants are recognized', () => {
     // Pin the variant set so a future drive-by addition is caught.
     const variants: CapabilityCheckResult[] = [
       { supported: true, path: 'chromium-offscreen' },

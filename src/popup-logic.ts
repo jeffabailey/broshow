@@ -26,11 +26,74 @@ type SendMessage = (message: PopupToSW) => Promise<SWToPopup>;
 type GetStreamId = () => Promise<string>;
 type OnMessage = (handler: (message: SWToPopup) => void) => void;
 
+/**
+ * The recording path selected by the runtime feature-detect probe.
+ *
+ * - `chromium-offscreen`: Chromium pipeline using chrome.offscreen +
+ *   chrome.tabCapture (the original BroShow path).
+ * - `firefox-display-media`: Firefox pipeline using
+ *   navigator.mediaDevices.getDisplayMedia + MediaRecorder hosted in the
+ *   background page.
+ *
+ * See `docs/feature/firefox-recording-support/design/data-models.md` §2.
+ */
+export type RecordingPath = 'chromium-offscreen' | 'firefox-display-media';
+
 export type CapabilityCheckResult =
-  | { readonly supported: true }
+  | { readonly supported: true; readonly path: 'chromium-offscreen' }
+  | { readonly supported: true; readonly path: 'firefox-display-media' }
   | { readonly supported: false; readonly reason: string };
 
 type CapabilityCheck = () => CapabilityCheckResult;
+
+// --- Probe globals shape ---------------------------------------------------
+
+/**
+ * Minimal shape of the global environment the capability probe inspects.
+ * Injected as a parameter so the probe is a pure function over its inputs --
+ * no `globalThis` reference inside, fully testable with fake globals.
+ */
+export interface ProbeGlobals {
+  readonly chrome?: {
+    readonly offscreen?: { readonly createDocument?: unknown };
+    readonly tabCapture?: { readonly getMediaStreamId?: unknown };
+  };
+  readonly navigator?: {
+    readonly mediaDevices?: { readonly getDisplayMedia?: unknown };
+  };
+}
+
+const isFunction = (value: unknown): boolean => typeof value === 'function';
+
+/**
+ * Pure feature-detect probe. Order matters: Chromium first (preserves the
+ * original BroShow behavior on Chromium), then Firefox getDisplayMedia,
+ * otherwise unsupported.
+ *
+ * No I/O, no global access -- the only inputs are the injected `globals`
+ * argument. This is the inner wheel of the popup capability check; the
+ * outer adapter in `src/popup.ts` calls this with the real globalThis.
+ */
+export const detectRecordingCapability = (
+  globals: ProbeGlobals,
+): CapabilityCheckResult => {
+  const offscreenCreate = globals.chrome?.offscreen?.createDocument;
+  const tabCaptureGetId = globals.chrome?.tabCapture?.getMediaStreamId;
+  if (isFunction(offscreenCreate) && isFunction(tabCaptureGetId)) {
+    return { supported: true, path: 'chromium-offscreen' };
+  }
+
+  const getDisplayMedia = globals.navigator?.mediaDevices?.getDisplayMedia;
+  if (isFunction(getDisplayMedia)) {
+    return { supported: true, path: 'firefox-display-media' };
+  }
+
+  return {
+    supported: false,
+    reason:
+      'Recording is not supported in this browser. BroShow needs either Chromium offscreen + tab-capture APIs or Firefox screen-sharing. Use Chrome, Edge, Brave, Firefox 121+, or another supported browser.',
+  };
+};
 
 // --- Minimal element interfaces for testability ----------------------------
 
@@ -48,6 +111,19 @@ interface FallbackNoticeElement {
   textContent: string;
   hidden: boolean;
 }
+
+interface FirefoxHintElement {
+  textContent: string;
+  hidden: boolean;
+}
+
+/**
+ * Exact AC-FF-04 hint copy. The popup surfaces this when the probe
+ * reports the firefox-display-media path so the user knows the
+ * surface picker (tab/window/screen) is about to open.
+ */
+const FIREFOX_HINT_TEXT =
+  'Firefox will ask you to choose a tab, window, or screen';
 
 // --- Pure functions --------------------------------------------------------
 
@@ -141,6 +217,7 @@ export const initializePopup = async (
   onMessage?: OnMessage,
   fallbackNoticeElement?: FallbackNoticeElement,
   capabilityCheck?: CapabilityCheck,
+  firefoxHintElement?: FirefoxHintElement,
 ): Promise<void> => {
   // Bail before any wiring if the runtime lacks the APIs the recorder needs
   // (e.g., Firefox has no chrome.offscreen / chrome.tabCapture). Shows the
@@ -153,6 +230,13 @@ export const initializePopup = async (
       button.textContent = 'Not supported';
       status.textContent = `Error: ${capability.reason}`;
       return;
+    }
+    // On the Firefox path, surface the AC-FF-04 hint so the user knows the
+    // surface picker (tab/window/screen) is about to appear. Chromium path
+    // leaves the hint untouched (hidden by default).
+    if (capability.path === 'firefox-display-media' && firefoxHintElement) {
+      firefoxHintElement.textContent = FIREFOX_HINT_TEXT;
+      firefoxHintElement.hidden = false;
     }
   }
 

@@ -8,29 +8,25 @@
 // the user clicks Start, then passed through the message to the service worker.
 // ---------------------------------------------------------------------------
 
-import { initializePopup, type CapabilityCheckResult } from './popup-logic';
+import {
+  detectRecordingCapability,
+  initializePopup,
+  type CapabilityCheckResult,
+  type ProbeGlobals,
+} from './popup-logic';
 import type { PopupToSW, SWToPopup } from './types';
 
 /**
- * Probe for the chromium-only APIs the recorder pipeline depends on.
- * Firefox accepts the manifest's `tabCapture`/`offscreen` permissions as
- * warnings only and ships the extension without the corresponding APIs, so a
- * runtime probe is the only honest signal that recording will actually work.
+ * Adapter for the pure feature-detect probe. The probe itself lives in
+ * `popup-logic.ts` and is fully pure -- this thin wrapper supplies the real
+ * `globalThis` so the probe can inspect runtime APIs.
+ *
+ * Order is intentional (Chromium first, Firefox second, otherwise unsupported)
+ * and lives inside the pure probe; see
+ * `docs/feature/firefox-recording-support/design/data-models.md` §2.3.
  */
-const checkRecordingCapability = (): CapabilityCheckResult => {
-  const offscreenAPI = (chrome as unknown as { offscreen?: { createDocument?: unknown } }).offscreen;
-  if (typeof offscreenAPI?.createDocument !== 'function') {
-    return {
-      supported: false,
-      reason:
-        'Recording is not supported in this browser. BroShow uses the Chromium-only offscreen and tab-capture APIs. Use Chrome, Edge, Brave, or another Chromium-based browser.',
-    };
-  }
-  if (typeof chrome.tabCapture?.getMediaStreamId !== 'function') {
-    return { supported: false, reason: 'Tab capture is not available in this browser.' };
-  }
-  return { supported: true };
-};
+const checkRecordingCapability = (): CapabilityCheckResult =>
+  detectRecordingCapability(globalThis as ProbeGlobals);
 
 const button = document.getElementById('action-button') as HTMLButtonElement;
 const status = document.getElementById('status') as HTMLParagraphElement;
