@@ -103,13 +103,10 @@ describe('Firefox record-tab architecture', () => {
 
       // Simulate what record.ts does: invoke getDisplayMedia, run a recorder
       // session that stops to a blob, base64 the blob, call downloads.download.
-      // The actual src/record.ts uses FileReader (a browser API) for the
-      // blob → dataUrl step. In node we substitute a deterministic stub so
-      // we exercise the rest of the chain.
-      const blobToDataUrl = async (blob: Blob): Promise<string> => {
-        const buf = Buffer.from(await blob.arrayBuffer());
-        return `data:${blob.type};base64,${buf.toString('base64')}`;
-      };
+      // src/record.ts uses URL.createObjectURL(blob) (Firefox forbids data:
+      // URLs in chrome.downloads.download). The test mirrors that.
+      const blobUrl = `blob:moz-extension://fake-id/abc-123`;
+      const createObjectURL = vi.fn<(blob: Blob) => string>().mockReturnValue(blobUrl);
 
       const startThenStop = async () => {
         const stream = await getDisplayMedia({ video: true, audio: true });
@@ -117,20 +114,50 @@ describe('Firefox record-tab architecture', () => {
           stop: async () => fakeBlob,
         };
         const blob = await session.stop();
-        const dataUrl = await blobToDataUrl(blob);
+        const url = createObjectURL(blob);
         const format: 'mp4' | 'webm' = blob.type.includes('mp4') ? 'mp4' : 'webm';
         const { formatRecordingFilename } = await import('../../src/background-logic');
         const filename = formatRecordingFilename(new Date(Date.UTC(2026, 3, 29, 18, 0, 0)), format);
-        await downloadFile({ url: dataUrl, filename });
+        await downloadFile({ url, filename });
         for (const t of stream.getTracks()) t.stop();
       };
 
       await startThenStop();
 
       expect(getDisplayMedia).toHaveBeenCalledWith({ video: true, audio: true });
+      expect(createObjectURL).toHaveBeenCalledWith(fakeBlob);
       expect(downloadFile).toHaveBeenCalledTimes(1);
       const [args] = downloadFile.mock.calls[0]!;
-      expect(args.url).toMatch(/^data:video\/mp4;/);
+      expect(args.url).toBe(blobUrl);
+      expect(args.url).toMatch(/^blob:/);
+      expect(args.filename).toMatch(/^broshow-2026-04-29-\d{6}\.mp4$/);
+    });
+
+    it('Stop calls chrome.downloads.download with a blob: URL, not data: (Firefox rejects data: URLs)', async () => {
+      // Firefox returns "Access denied for URL data:..." when you pass a data
+      // URL to chrome.downloads.download. Only http(s) and blob: schemes are
+      // accepted. Chrome accepts data: but blob: works there too, so blob:
+      // is the cross-target choice.
+      const fakeBlob = new Blob(['fake-mp4-bytes'], { type: 'video/mp4' });
+      const downloadFile = vi
+        .fn<(args: { url: string; filename: string }) => Promise<number>>()
+        .mockResolvedValue(1);
+
+      // Mirror what record.ts does after stop:
+      const blobUrl = `blob:moz-extension://fake-id/${Math.random().toString(36).slice(2)}`;
+      const createObjectURL = vi.fn<(blob: Blob) => string>().mockReturnValue(blobUrl);
+
+      const { formatRecordingFilename } = await import('../../src/background-logic');
+      const filename = formatRecordingFilename(new Date(Date.UTC(2026, 3, 29, 18, 0, 0)), 'mp4');
+
+      const url = createObjectURL(fakeBlob);
+      await downloadFile({ url, filename });
+
+      expect(createObjectURL).toHaveBeenCalledWith(fakeBlob);
+      expect(downloadFile).toHaveBeenCalledTimes(1);
+      const [args] = downloadFile.mock.calls[0]!;
+      expect(args.url).toMatch(/^blob:/);
+      expect(args.url).not.toMatch(/^data:/);
       expect(args.filename).toMatch(/^broshow-2026-04-29-\d{6}\.mp4$/);
     });
 

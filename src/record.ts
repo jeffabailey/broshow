@@ -29,14 +29,6 @@ let stream: MediaStream | null = null;
 let session: ReturnType<typeof createRecordingSession> | null = null;
 let state: State = 'idle';
 
-const blobToDataUrl = (blob: Blob): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(new Error('Failed to read blob'));
-    reader.readAsDataURL(blob);
-  });
-
 // renderButton ONLY updates the button. Status text is owned by the event
 // handlers (start/stop) so a caller's error message survives the
 // state -> idle transition. Earlier versions of this file overwrote
@@ -108,10 +100,19 @@ const stopRecording = async (): Promise<void> => {
 
   try {
     const blob = await currentSession.stop();
-    const dataUrl = await blobToDataUrl(blob);
     const format: 'mp4' | 'webm' = blob.type.includes('mp4') ? 'mp4' : 'webm';
     const filename = formatRecordingFilename(new Date(), format);
-    await chrome.downloads.download({ url: dataUrl, filename });
+    // Firefox's chrome.downloads.download REJECTS data: URLs ("Access denied
+    // for URL data:..."). It only accepts http(s) and blob: schemes. Chrome
+    // accepts data: URLs but blob: works there too, so blob: is the
+    // cross-target choice. Revoke after a delay so the download has time to
+    // be consumed -- revoking immediately can race with the download dispatch.
+    const blobUrl = URL.createObjectURL(blob);
+    try {
+      await chrome.downloads.download({ url: blobUrl, filename });
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    }
     status.textContent = `Saved ${filename}. You can close this tab.`;
     state = 'done';
   } catch (error) {
