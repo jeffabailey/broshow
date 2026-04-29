@@ -70,8 +70,12 @@ jobs:
                 strict_min_version: '121.0'
               }
             };
+            m.background.scripts = ['background.js'];
             fs.writeFileSync(path, JSON.stringify(m, null, 2) + '\n');
           "
+
+      - name: Lint Firefox build
+        run: npx --yes web-ext lint --source-dir firefox-dist --warnings-as-errors=false
 
       - name: Package Firefox xpi
         run: |
