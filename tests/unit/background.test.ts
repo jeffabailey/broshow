@@ -301,6 +301,7 @@ describe('background wiring', () => {
     clearRecordingData: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     broadcastState: vi.fn(),
     broadcastFallbackNotice: vi.fn<(message: string) => void>(),
+    broadcastError: vi.fn<(message: string) => void>(),
     setBadge: vi.fn<(text: string, color?: string) => void>(),
     now: vi.fn<() => number>(),
     setTimeout: vi.fn<(cb: () => void, ms: number) => number>().mockReturnValue(1),

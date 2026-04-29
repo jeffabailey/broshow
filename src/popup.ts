@@ -8,8 +8,29 @@
 // the user clicks Start, then passed through the message to the service worker.
 // ---------------------------------------------------------------------------
 
-import { initializePopup } from './popup-logic';
+import { initializePopup, type CapabilityCheckResult } from './popup-logic';
 import type { PopupToSW, SWToPopup } from './types';
+
+/**
+ * Probe for the chromium-only APIs the recorder pipeline depends on.
+ * Firefox accepts the manifest's `tabCapture`/`offscreen` permissions as
+ * warnings only and ships the extension without the corresponding APIs, so a
+ * runtime probe is the only honest signal that recording will actually work.
+ */
+const checkRecordingCapability = (): CapabilityCheckResult => {
+  const offscreenAPI = (chrome as unknown as { offscreen?: { createDocument?: unknown } }).offscreen;
+  if (typeof offscreenAPI?.createDocument !== 'function') {
+    return {
+      supported: false,
+      reason:
+        'Recording is not supported in this browser. BroShow uses the Chromium-only offscreen and tab-capture APIs. Use Chrome, Edge, Brave, or another Chromium-based browser.',
+    };
+  }
+  if (typeof chrome.tabCapture?.getMediaStreamId !== 'function') {
+    return { supported: false, reason: 'Tab capture is not available in this browser.' };
+  }
+  return { supported: true };
+};
 
 const button = document.getElementById('action-button') as HTMLButtonElement;
 const status = document.getElementById('status') as HTMLParagraphElement;
@@ -53,4 +74,12 @@ const onMessage = (handler: (message: import('./types').SWToPopup) => void) => {
   });
 };
 
-initializePopup(button, status, sendMessage, getStreamId, onMessage, fallbackNotice);
+initializePopup(
+  button,
+  status,
+  sendMessage,
+  getStreamId,
+  onMessage,
+  fallbackNotice,
+  checkRecordingCapability,
+);

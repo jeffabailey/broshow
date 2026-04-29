@@ -67,6 +67,12 @@ const chromeAPIs: ChromeAPIs = {
     });
   },
 
+  broadcastError: (message) => {
+    chrome.runtime.sendMessage({ type: 'error', message }).catch(() => {
+      // Popup may be closed — ignore
+    });
+  },
+
   setBadge: (text, color) => {
     chrome.action.setBadgeText({ text });
     if (color) {

@@ -55,6 +55,7 @@ export type ChromeAPIs = {
   readonly clearRecordingData: () => Promise<void>;
   readonly broadcastState: (state: RecordingState) => void;
   readonly broadcastFallbackNotice: (message: string) => void;
+  readonly broadcastError: (message: string) => void;
   readonly setBadge: (text: string, color?: string) => void;
   readonly now: () => number;
   readonly setTimeout: (callback: () => void, ms: number) => number;
@@ -213,6 +214,9 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
       state = { status: 'idle' };
       apis.setBadge(badgeFor(state).text, badgeFor(state).color);
       await apis.closeOffscreenDocument();
+      apis.broadcastError(
+        'Recording timed out: the recorder did not finish within the expected time. This commonly happens on browsers that do not support the offscreen API (e.g., Firefox).',
+      );
       apis.broadcastState(state);
     }, PROCESSING_TIMEOUT_MS);
   };

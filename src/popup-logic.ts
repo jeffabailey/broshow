@@ -26,6 +26,12 @@ type SendMessage = (message: PopupToSW) => Promise<SWToPopup>;
 type GetStreamId = () => Promise<string>;
 type OnMessage = (handler: (message: SWToPopup) => void) => void;
 
+export type CapabilityCheckResult =
+  | { readonly supported: true }
+  | { readonly supported: false; readonly reason: string };
+
+type CapabilityCheck = () => CapabilityCheckResult;
+
 // --- Minimal element interfaces for testability ----------------------------
 
 interface ButtonElement {
@@ -134,7 +140,22 @@ export const initializePopup = async (
   getStreamId: GetStreamId,
   onMessage?: OnMessage,
   fallbackNoticeElement?: FallbackNoticeElement,
+  capabilityCheck?: CapabilityCheck,
 ): Promise<void> => {
+  // Bail before any wiring if the runtime lacks the APIs the recorder needs
+  // (e.g., Firefox has no chrome.offscreen / chrome.tabCapture). Shows the
+  // user a clear message instead of letting the SW path get stuck on the
+  // never-resolving offscreen handshake.
+  if (capabilityCheck) {
+    const capability = capabilityCheck();
+    if (!capability.supported) {
+      button.disabled = true;
+      button.textContent = 'Not supported';
+      status.textContent = `Error: ${capability.reason}`;
+      return;
+    }
+  }
+
   // Provide a no-op fallback notice element when none is supplied (backwards-compatible).
   const fallbackNotice: FallbackNoticeElement = fallbackNoticeElement ?? {
     textContent: '',
