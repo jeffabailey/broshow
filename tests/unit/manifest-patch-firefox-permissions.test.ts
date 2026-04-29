@@ -101,3 +101,58 @@ describe('AC-FF-06 the Chromium build pipeline is untouched (regression guard)',
     );
   });
 });
+
+describe('Step 03-01: Firefox manifest declares MV3 event-page wiring (D1, ADR-003 Option C)', () => {
+  // The Firefox MV3 event page hosts MediaRecorder. The patched manifest
+  // MUST declare both:
+  //   1. browser_specific_settings.gecko.{id, strict_min_version} so AMO
+  //      accepts the build and Firefox enforces the minimum version (121.0,
+  //      where MV3 event-page support is stable).
+  //   2. background.scripts: ['background.js'] so Firefox loads the bundled
+  //      background script as an event page (Firefox MV3 does NOT honor
+  //      background.service_worker the way Chromium does).
+  //
+  // Without (2), getDisplayMedia cannot run from the background context and
+  // ADR-003 Option C is unimplementable on Firefox. This scenario pins the
+  // patcher's output so a future refactor cannot silently drop these fields.
+
+  it('declares browser_specific_settings.gecko with id and strict_min_version 121.0+', () => {
+    const patched = patchManifestForFirefox(SOURCE_MANIFEST);
+
+    expect(patched.browser_specific_settings).toBeDefined();
+    expect(patched.browser_specific_settings.gecko).toBeDefined();
+    expect(patched.browser_specific_settings.gecko.id).toBe(
+      'broshow@jeffabailey.com',
+    );
+    // strict_min_version must be >= 121.0 (the version where Firefox MV3
+    // event-page + getDisplayMedia from background reliably honor the
+    // user-gesture chain forwarded from a popup message).
+    const minVersion = patched.browser_specific_settings.gecko.strict_min_version;
+    expect(minVersion).toBeDefined();
+    const major = parseInt(String(minVersion).split('.')[0], 10);
+    expect(major).toBeGreaterThanOrEqual(121);
+  });
+
+  it('declares background.scripts so Firefox loads the bundled background script as an event page', () => {
+    const patched = patchManifestForFirefox(SOURCE_MANIFEST);
+
+    // Firefox MV3 honors background.scripts; Chromium honors background.service_worker.
+    // The patched manifest may carry both (Firefox ignores service_worker),
+    // but scripts MUST be present and reference the bundled entry.
+    expect(patched.background).toBeDefined();
+    expect(Array.isArray(patched.background.scripts)).toBe(true);
+    expect(patched.background.scripts).toContain('background.js');
+  });
+
+  it('AC-FF-08 holds: no new permissions introduced by the event-page wiring', () => {
+    // Adding browser_specific_settings + background.scripts must not bring
+    // any new permission entries. Permissions remain a subset of the source
+    // manifest minus Chromium-only entries.
+    const patched = patchManifestForFirefox(SOURCE_MANIFEST);
+    const sourcePermissions = new Set(SOURCE_MANIFEST.permissions);
+
+    for (const perm of patched.permissions) {
+      expect(sourcePermissions.has(perm)).toBe(true);
+    }
+  });
+});
