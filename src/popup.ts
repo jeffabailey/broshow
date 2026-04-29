@@ -34,6 +34,11 @@ const setupFirefoxPopupRecorder = (
   buttonEl: HTMLButtonElement,
   statusEl: HTMLParagraphElement,
 ): void => {
+  // popup.html ships the button with `disabled` so the chromium path can
+  // wait for the SW's get-state response before letting the user click.
+  // The Firefox path has no SW round-trip; clear the initial disabled state
+  // immediately so the user can click "Open Recorder".
+  buttonEl.disabled = false;
   buttonEl.textContent = 'Open Recorder';
   statusEl.textContent =
     'Firefox requires a tab context for recording. Click to open the recorder.';

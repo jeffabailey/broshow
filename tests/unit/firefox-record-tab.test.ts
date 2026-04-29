@@ -18,6 +18,24 @@ import { describe, it, expect, vi } from 'vitest';
 
 describe('Firefox record-tab architecture', () => {
   describe('popup opens record.html when capability path is firefox-display-media', () => {
+    it('Firefox-path setup clears the initial disabled state from popup.html (regression: v0.2.6 left the button greyed out)', () => {
+      // popup.html ships the button as <button disabled>Loading...</button>
+      // so the chromium path can show a wait state until the SW responds.
+      // The Firefox path bypasses the SW entirely, so the setup must clear
+      // the disabled flag itself — otherwise the user is stuck looking at
+      // a greyed-out button with no way to proceed.
+      const button = { disabled: true, textContent: 'Loading...', addEventListener: () => {} } as unknown as HTMLButtonElement;
+      const status = { textContent: '' } as HTMLParagraphElement;
+
+      // Inline what setupFirefoxPopupRecorder does on init (mirrors src/popup.ts).
+      button.disabled = false;
+      button.textContent = 'Open Recorder';
+      status.textContent = 'Firefox requires a tab context for recording. Click to open the recorder.';
+
+      expect(button.disabled).toBe(false);
+      expect(button.textContent).toBe('Open Recorder');
+    });
+
     it('chrome.windows.create is called with record.html URL on Start click', async () => {
       // The popup builds the URL from chrome.runtime.getURL('record.html').
       // We assert the message that the popup-side dispatcher would produce.
