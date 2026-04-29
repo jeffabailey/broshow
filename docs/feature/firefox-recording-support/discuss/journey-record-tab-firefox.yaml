@@ -1,0 +1,324 @@
+journey:
+  name: "Record a Browser Tab (Firefox)"
+  goal: "Capture a Firefox tab/window/screen and download it as an mp4 (or webm fallback)"
+  persona: "Browser User who installed BroShow on Firefox"
+  parent_journey: "docs/feature/browser-tab-recorder/discuss/journey-record-tab-visual.md"
+
+  emotional_arc:
+    start: "Hopeful (the v0.1.2 install works; expecting recording to also work this time)"
+    middle: "Confident -> Curious at the picker -> Informed -> Assured during recording"
+    end: "Delighted (downloaded file plays; same outcome as Chrome)"
+
+steps:
+  - id: 1
+    name: "Install Firefox Add-on"
+    command: "Install signed .xpi (same package shipped by patch-firefox-manifest.mjs)"
+    tui_mockup: |
+      [Firefox toolbar]  [...] [BroShow icon]   <-- icon visible, no longer "not supported"
+
+    shared_artifacts:
+      - name: "extension_icon"
+        source: "src/icons/*"
+        displayed_as: "${broshowIcon}"
+        consumers: ["Chrome toolbar", "Firefox toolbar"]
+      - name: "extension_version"
+        source: "src/manifest.json (version field)"
+        displayed_as: "${version}"
+        consumers: ["about:addons", "Chrome Web Store listing"]
+
+    emotional_state:
+      entry: "Hopeful"
+      exit: "Reassured"
+
+    integration_checkpoint: |
+      Capability probe in src/popup.ts must NOT short-circuit to the
+      "not supported" message on Firefox once this feature ships.
+      Probe must instead detect the Firefox-supported recording path
+      (e.g., navigator.mediaDevices.getDisplayMedia) as a sufficient
+      capability signal.
+
+    gherkin: |
+      Scenario: Firefox add-on installs and shows recordable popup
+        Given Maria has Firefox 121 or newer
+        When she installs the BroShow add-on
+        Then the BroShow icon appears in her toolbar
+        And clicking the icon shows a "Start Recording" button (not the "not supported" message)
+
+  - id: 2
+    name: "Click Extension Icon"
+    command: "User clicks toolbar icon -> popup opens"
+    tui_mockup: |
+      +-- BroShow ----------------------------------+
+      |                                              |
+      |   [ Start Recording ]                        |
+      |                                              |
+      |   Firefox will ask you to choose a tab,      |
+      |   window, or screen.                         |
+      |                                              |
+      +----------------------------------------------+
+
+    shared_artifacts:
+      - name: "record_button_label"
+        source: "src/popup-logic.ts"
+        displayed_as: "${recordButtonLabel}"
+        consumers: ["Chrome popup", "Firefox popup"]
+      - name: "browser_hint"
+        source: "src/popup-logic.ts (NEW: per-browser hint)"
+        displayed_as: "${browserHint}"
+        consumers: ["Firefox popup only"]
+
+    emotional_state:
+      entry: "Hopeful"
+      exit: "Confident"
+
+    integration_checkpoint: |
+      Hint text appears only when running on a browser that uses the
+      getDisplayMedia path. Chrome popup does not show the hint.
+      Detection mechanism is in scope for DESIGN.
+
+    gherkin: |
+      Scenario: Popup shows surface-picker hint on Firefox
+        Given the BroShow add-on is installed on Firefox
+        When Maria clicks the BroShow toolbar icon
+        Then the popup shows a "Start Recording" button
+        And the popup shows the hint "Firefox will ask you to choose a tab, window, or screen"
+
+      Scenario: Popup does not show the Firefox hint on Chrome
+        Given the BroShow extension is installed on Chrome
+        When Maria clicks the BroShow toolbar icon
+        Then the popup shows a "Start Recording" button
+        And the popup does NOT show the Firefox hint
+
+  - id: 2.5
+    name: "Pick Surface (Firefox-only)"
+    command: "navigator.mediaDevices.getDisplayMedia({video: true, audio: true})"
+    tui_mockup: |
+      +-- Firefox: Allow BroShow to share your screen? --+
+      |                                                   |
+      | Choose what to share:                             |
+      |   ( ) Entire screen                               |
+      |   ( ) Window:    [ Firefox - Tutorial.html  v ]  |
+      |   (o) Tab:       [ Tutorial.html             v ]  |
+      |                                                   |
+      | [x] Share audio                                   |
+      |                                                   |
+      |              [ Cancel ]   [ Allow ]               |
+      +---------------------------------------------------+
+
+    shared_artifacts:
+      - name: "captured_surface"
+        source: "Firefox surface picker output (MediaStream getSettings)"
+        displayed_as: "${capturedSurface}"  # 'browser' | 'window' | 'monitor'
+        consumers: ["recording host (start)", "filename generator (informational)"]
+      - name: "share_audio_choice"
+        source: "Firefox surface picker output (audio track present?)"
+        displayed_as: "${audioCaptured}"
+        consumers: ["recording host", "popup success message"]
+
+    emotional_state:
+      entry: "Confident"
+      exit: "Informed"
+
+    integration_checkpoint: |
+      Picker is owned by Firefox; we cannot mock its UX.
+      The recording host MUST handle three outcomes:
+        a) user picks a surface          -> stream returned, recording starts
+        b) user cancels                  -> popup returns to idle silently
+        c) picker errors out             -> popup shows actionable error
+
+    gherkin: |
+      Scenario: User picks a tab in the Firefox surface picker
+        Given Maria clicked Start Recording on Firefox
+        When the Firefox surface picker appears
+        And she selects a tab and clicks Allow
+        Then BroShow begins recording the picked surface
+
+      Scenario: User cancels the Firefox surface picker
+        Given Maria clicked Start Recording on Firefox
+        When the Firefox surface picker appears
+        And she clicks Cancel
+        Then BroShow returns to the idle state
+        And no error toast is shown
+
+      Scenario: User declines audio sharing
+        Given Maria clicked Start Recording on Firefox
+        When the Firefox surface picker appears
+        And she selects a tab with the "Share audio" checkbox unchecked
+        Then BroShow records video only
+        And after stop the popup notes that audio was not captured
+
+  - id: 3
+    name: "Recording Active"
+    command: "MediaRecorder.start() inside the recording host"
+    tui_mockup: |
+      [Firefox URL bar] [...] [* Sharing] [...]   <-- Firefox-native sharing pill
+      [BroShow icon]    [REC]                      <-- BroShow REC badge (US-07)
+
+      Popup (if user reopens):
+      +-- BroShow ----------------------------------+
+      |   * Recording...   00:14                     |
+      |   [ Stop Recording ]                         |
+      +----------------------------------------------+
+
+    shared_artifacts:
+      - name: "recording_state"
+        source: "src/background-logic.ts state machine"
+        displayed_as: "${recordingState}"
+        consumers: ["popup UI", "REC badge", "recording host"]
+      - name: "rec_badge"
+        source: "src/background.ts (chromeAPIs.setBadge)"
+        displayed_as: "${recBadge}"
+        consumers: ["Chrome action badge", "Firefox action badge"]
+
+    emotional_state:
+      entry: "Informed"
+      exit: "Assured"
+
+    integration_checkpoint: |
+      The recording host's lifetime is the open architectural question.
+      DESIGN must pick: popup-hosted | record-tab-hosted | background-scripts-page.
+      Acceptance criterion is binary: a recording lasting up to 5 minutes
+      MUST survive whatever event closes the corresponding host on Chrome
+      (e.g., service worker idle, popup blur).
+
+    gherkin: |
+      Scenario: REC badge shows during Firefox recording
+        Given Maria is recording on Firefox
+        Then the BroShow toolbar icon shows the REC badge
+
+      Scenario: Recording survives a 60-second session
+        Given Maria starts a recording on Firefox
+        When 60 seconds pass without her interacting with the popup
+        Then the recording is still active
+        And clicking Stop produces a file containing all 60 seconds
+
+  - id: 4
+    name: "Stop Recording"
+    command: "MediaRecorder.stop() OR MediaStreamTrack 'ended' event"
+    tui_mockup: |
+      +-- BroShow ----------------------------------+
+      |   Processing...                              |
+      +----------------------------------------------+
+
+    shared_artifacts:
+      - name: "recording_state"
+        source: "src/background-logic.ts state machine"
+        displayed_as: "${recordingState}"  # 'stopping' -> 'idle'
+        consumers: ["popup UI", "REC badge"]
+
+    emotional_state:
+      entry: "Assured"
+      exit: "Satisfied"
+
+    integration_checkpoint: |
+      Stopping via the Firefox native "Stop sharing" affordance MUST
+      produce identical results to clicking the BroShow Stop button.
+      Both paths trigger MediaRecorder.stop() and the download flow.
+
+    gherkin: |
+      Scenario: Stopping via the BroShow popup button
+        Given Maria is recording on Firefox
+        When she clicks Stop Recording in the popup
+        Then MediaRecorder finishes
+        And a file is downloaded
+
+      Scenario: Stopping via Firefox native sharing indicator
+        Given Maria is recording on Firefox
+        When she clicks "Stop sharing" in Firefox's URL bar
+        Then BroShow detects the ended track
+        And MediaRecorder finishes
+        And a file is downloaded
+
+  - id: 5
+    name: "File Saved"
+    command: "chrome.downloads.download({url, filename})"
+    tui_mockup: |
+      [Firefox Downloads]
+        broshow-2026-04-29-141522.mp4   2.4 MB
+
+    shared_artifacts:
+      - name: "downloaded_filename"
+        source: "src/filename-generator.ts (timestamped pattern)"
+        displayed_as: "${downloadedFilename}"
+        consumers: ["Chrome downloads", "Firefox downloads"]
+      - name: "container_format"
+        source: "src/offscreen-logic.ts -> mp4-mux outcome"
+        displayed_as: "${containerFormat}"  # 'mp4' | 'webm'
+        consumers: ["filename extension", "user-facing fallback notice"]
+
+    emotional_state:
+      entry: "Satisfied"
+      exit: "Delighted"
+
+    integration_checkpoint: |
+      ADR-002 (mp4-mux) MUST still apply on Firefox.
+      WebM fallback path (US-06) is the contractual safety net for
+      Firefox same as Chrome.
+
+    gherkin: |
+      Scenario: Successful Firefox recording downloads as mp4
+        Given Maria recorded for 10 seconds on Firefox
+        And mp4-mux succeeded
+        When the recording stops
+        Then a file matching "broshow-YYYY-MM-DD-HHmmss.mp4" appears in her Downloads
+        And the file plays in VLC, QuickTime, and Windows Media Player
+
+      Scenario: Firefox recording falls back to webm
+        Given Maria recorded for 10 seconds on Firefox
+        And mp4-mux failed
+        When the recording stops
+        Then a file matching "broshow-YYYY-MM-DD-HHmmss.webm" appears in her Downloads
+        And the popup shows a fallback notice explaining the format change
+
+integration_validation:
+  shared_artifact_consistency:
+    - artifact: "extension_version"
+      must_match_across: [1]
+      failure_message: "Firefox add-on version must equal Chrome extension version (single src/manifest.json source)."
+
+    - artifact: "record_button_label"
+      must_match_across: [2, 4]
+      failure_message: "Start/Stop button labels must match between Chrome and Firefox popups."
+
+    - artifact: "recording_state"
+      must_match_across: [3, 4]
+      failure_message: "Recording state machine must drive the same UI updates on both browsers."
+
+    - artifact: "downloaded_filename"
+      must_match_across: [5]
+      failure_message: "Filename pattern must be identical across browsers (US-09)."
+
+    - artifact: "container_format"
+      must_match_across: [5]
+      failure_message: "Both browsers must follow ADR-002: mp4 primary, webm fallback per US-06."
+
+  cross_browser_consistency:
+    - check: "Chrome flow unchanged"
+      description: "Adding the Firefox path must not alter Chrome's UX, popup chrome (apart from the conditional hint), or output."
+    - check: "Capability probe still blocks unsupported browsers"
+      description: "Browsers that lack BOTH chrome.tabCapture/chrome.offscreen AND navigator.mediaDevices.getDisplayMedia must still see the 'not supported' message."
+    - check: "Firefox hint hidden on Chrome"
+      description: "The Firefox-specific surface-picker hint must NOT appear in the Chrome popup."
+
+design_questions_for_next_wave:
+  - id: "DQ-1"
+    question: "Where does the recording host live on Firefox?"
+    options:
+      - "Popup (dies on blur — likely unacceptable)"
+      - "Dedicated recording tab (survives blur; needs tab management UX)"
+      - "Firefox MV3 background.scripts page (event-page-like; can be unloaded)"
+    decision_owner: "solution-architect (DESIGN wave)"
+    constraint: "Whatever is chosen, a 5-minute recording with no popup interaction MUST survive."
+
+  - id: "DQ-2"
+    question: "How does the popup detect 'Firefox-style' recording vs 'Chrome-style' to conditionally show the hint and pick the right host bootstrap?"
+    options:
+      - "Feature-detect chrome.tabCapture / chrome.offscreen (already done in popup.ts capability probe)"
+      - "User agent sniff (fragile, avoid)"
+      - "Build-time flag injected by patch-firefox-manifest.mjs"
+    decision_owner: "solution-architect (DESIGN wave)"
+
+  - id: "DQ-3"
+    question: "Does ADR-001 (offscreen document) need a Firefox companion ADR, or do we extend ADR-001 to record both decisions?"
+    decision_owner: "solution-architect (DESIGN wave)"
+    note: "ADR-001 already acknowledges 'Firefox compatibility requires a different approach' — DESIGN should record the chosen approach as a new ADR or amendment."
