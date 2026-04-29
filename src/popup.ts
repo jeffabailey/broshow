@@ -75,19 +75,19 @@ const setupFirefoxPopupRecorder = (
   };
 
   const startRecording = async (): Promise<void> => {
+    console.log('[ff-popup] startRecording: invoking getDisplayMedia');
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      console.log('[ff-popup] startRecording: stream acquired',
+        stream.getVideoTracks().length, 'video tracks,',
+        stream.getAudioTracks().length, 'audio tracks');
       session = createRecordingSession(stream);
       state = 'recording';
       renderUI();
     } catch (error) {
       const e = error as Error;
-      if (e?.name === 'NotAllowedError') {
-        // User cancelled the picker — silent return to idle.
-        statusEl.textContent = 'Recording cancelled.';
-      } else {
-        statusEl.textContent = `Error: ${e?.message ?? 'failed to start recording'}`;
-      }
+      console.log('[ff-popup] startRecording: REJECTED', { name: e?.name, message: e?.message, error: e });
+      statusEl.textContent = `getDisplayMedia rejected: ${e?.name ?? 'UnknownError'} — ${e?.message ?? 'no message'}`;
       state = 'idle';
       buttonEl.disabled = false;
       buttonEl.textContent = 'Start Recording';
