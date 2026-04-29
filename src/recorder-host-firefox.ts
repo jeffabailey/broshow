@@ -66,11 +66,15 @@ const buildFirefoxMediaAPIs = (
   onCaptureError: (error: unknown) => void,
 ): MediaAPIs => ({
   getUserMedia: async (_ignoredConstraints: MediaStreamConstraints) => {
+    console.log('[ff-host] getDisplayMedia: invoking');
     try {
       const stream = await deps.getDisplayMedia({ video: true, audio: true });
+      console.log('[ff-host] getDisplayMedia: resolved with', stream.getVideoTracks().length, 'video and', stream.getAudioTracks().length, 'audio tracks');
       onStreamCaptured(stream);
       return stream;
     } catch (error) {
+      const e = error as Error;
+      console.log('[ff-host] getDisplayMedia: REJECTED', e?.name, '|', e?.message);
       onCaptureError(error);
       throw error;
     }
