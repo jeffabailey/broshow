@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import {
   cpSync,
   mkdirSync,
@@ -53,18 +53,31 @@ const firefoxManifestPath = resolve(firefoxStaging, 'manifest.json');
 const patched = patchManifestForFirefox(JSON.parse(readFileSync(firefoxManifestPath, 'utf8')));
 writeFileSync(firefoxManifestPath, JSON.stringify(patched, null, 2) + '\n');
 
-log('Submitting to AMO for signing (this can take 30-60 seconds)');
-execSync(
+log(`Submitting v${version} to AMO for signing (this can take 30-60 seconds)`);
+const sign = spawnSync(
+  'npx',
   [
-    'npx web-ext sign',
-    `--source-dir "${firefoxStaging}"`,
-    `--artifacts-dir "${signedDir}"`,
-    '--channel unlisted',
-    `--api-key "${issuer}"`,
-    `--api-secret "${secret}"`,
-  ].join(' '),
-  { stdio: 'inherit', cwd: root },
+    'web-ext',
+    'sign',
+    '--source-dir', firefoxStaging,
+    '--artifacts-dir', signedDir,
+    '--channel', 'unlisted',
+    '--api-key', issuer,
+    '--api-secret', secret,
+  ],
+  { stdio: ['inherit', 'pipe', 'pipe'], cwd: root, encoding: 'utf8' },
 );
+process.stdout.write(sign.stdout || '');
+process.stderr.write(sign.stderr || '');
+if (sign.status !== 0) {
+  const combined = `${sign.stdout || ''}${sign.stderr || ''}`;
+  if (/Version .* already exists/i.test(combined)) {
+    console.error('');
+    console.error(`[sign] AMO already has version ${version} signed. Bump the version in src/manifest.json (and package.json), then run again.`);
+    console.error('[sign]   Once a version slot is taken on AMO it cannot be reused, even if the previous upload was unsigned or failed validation.');
+  }
+  process.exit(sign.status ?? 1);
+}
 
 const signedXpi = readdirSync(signedDir).find((f) => f.endsWith('.xpi'));
 if (!signedXpi) {
