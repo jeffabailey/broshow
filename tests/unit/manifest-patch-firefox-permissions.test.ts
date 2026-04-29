@@ -42,7 +42,7 @@ const SOURCE_MANIFEST = {
 };
 
 describe('AC-FF-08 stripChromeOnlyPermissions removes Chromium-only permissions for Firefox', () => {
-  it.skip('removes tabCapture and offscreen from the permissions list (FR-FF-04 / NFR-FF-01)', () => {
+  it('removes tabCapture and offscreen from the permissions list (FR-FF-04 / NFR-FF-01)', () => {
     const stripped = stripChromeOnlyPermissions(SOURCE_MANIFEST);
 
     // Observable outcome: Firefox install no longer warns on tabCapture/offscreen
@@ -50,20 +50,20 @@ describe('AC-FF-08 stripChromeOnlyPermissions removes Chromium-only permissions 
     expect(stripped.permissions).not.toContain('offscreen');
   });
 
-  it.skip('retains storage and downloads (still required on Firefox)', () => {
+  it('retains storage and downloads (still required on Firefox)', () => {
     const stripped = stripChromeOnlyPermissions(SOURCE_MANIFEST);
 
     expect(stripped.permissions).toContain('storage');
     expect(stripped.permissions).toContain('downloads');
   });
 
-  it.skip('does not mutate the input manifest (pure function contract)', () => {
+  it('does not mutate the input manifest (pure function contract)', () => {
     const before = JSON.parse(JSON.stringify(SOURCE_MANIFEST));
     stripChromeOnlyPermissions(SOURCE_MANIFEST);
     expect(SOURCE_MANIFEST).toEqual(before);
   });
 
-  it.skip('exposes the canonical list of Chromium-only permissions', () => {
+  it('exposes the canonical list of Chromium-only permissions', () => {
     expect(CHROME_ONLY_PERMISSIONS).toEqual(
       expect.arrayContaining(['tabCapture', 'offscreen']),
     );
@@ -71,7 +71,7 @@ describe('AC-FF-08 stripChromeOnlyPermissions removes Chromium-only permissions 
 });
 
 describe('AC-FF-08 Firefox manifest pipeline strips Chromium-only permissions end-to-end', () => {
-  it.skip('the Firefox-patched manifest declares no Chromium-only permissions (composed pipeline)', () => {
+  it('the Firefox-patched manifest declares no Chromium-only permissions (composed pipeline)', () => {
     // DELIVER wires stripChromeOnlyPermissions into patchManifestForFirefox.
     // This pin asserts the composed pipeline leaves Firefox without those
     // permissions, no matter the order the crafter chooses.
@@ -92,7 +92,7 @@ describe('AC-FF-08 Firefox manifest pipeline strips Chromium-only permissions en
 });
 
 describe('AC-FF-06 the Chromium build pipeline is untouched (regression guard)', () => {
-  it.skip('the Chromium manifest still declares all four original permissions', () => {
+  it('the Chromium manifest still declares all four original permissions', () => {
     // The Chromium pipeline never calls stripChromeOnlyPermissions. Pin
     // current behavior so a future "always strip" refactor is caught.
     const chromiumPermissions = SOURCE_MANIFEST.permissions.slice().sort();
