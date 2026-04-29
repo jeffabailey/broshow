@@ -15,10 +15,18 @@ export type RecordingState =
   | { readonly status: 'recording'; readonly tabId: number; readonly startTime: number }
   | { readonly status: 'processing' };
 
+// --- Recording-path discriminant -------------------------------------------
+// Per docs/feature/firefox-recording-support/design/data-models.md §3, the
+// popup's start-recording message carries the runtime witness of the
+// capability probe: 'chromium-offscreen' (chrome.offscreen + tabCapture)
+// or 'firefox-display-media' (navigator.mediaDevices.getDisplayMedia).
+export type RecordingPath = 'chromium-offscreen' | 'firefox-display-media';
+
 // --- Popup -> Service Worker messages -------------------------------------
 
 export type PopupToSW =
-  | { readonly type: 'start-recording'; readonly streamId: string }
+  | { readonly type: 'start-recording'; readonly path: 'chromium-offscreen'; readonly streamId: string }
+  | { readonly type: 'start-recording'; readonly path: 'firefox-display-media' }
   | { readonly type: 'stop-recording' }
   | { readonly type: 'get-state' };
 

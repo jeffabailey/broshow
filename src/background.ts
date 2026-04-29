@@ -5,26 +5,45 @@
 // All side effects (chrome.*, console.*) live here at the edge.
 //
 // Per docs/feature/firefox-recording-support/design/component-boundaries.md §3
-// the offscreen-document lifecycle (create/stop/close) is encapsulated by the
-// ChromiumOffscreenRecorderHost adapter. The state-machine logic stays in
-// createMessageHandler; only the offscreen-effect calls are routed through
-// the adapter so a sibling adapter (FirefoxBackgroundRecorderHost, step 02-01)
-// can plug in without touching the pure core.
+// the recorder-host lifecycle (create/start/stop/close) is encapsulated by
+// the RecorderHost port. selectHost(target) is the SINGLE target-branching
+// site in the project (D16). The state-machine logic in
+// createMessageHandler stays target-blind; only the host-effect calls are
+// routed through the selected adapter, so the Firefox adapter can plug in
+// without touching the pure core.
+//
+// On the first start-recording message of a session, background.ts reads
+// the path discriminant from the popup, calls selectHost(targetForPath(path))
+// once, and reuses the returned host for the subsequent stop. Re-selection
+// happens only when the path changes between sessions (e.g., extension
+// reload on a different browser).
 // ---------------------------------------------------------------------------
 
-import type { OffscreenToSW, SWToOffscreen, Message } from './types';
+import type { OffscreenToSW, SWToOffscreen, Message, RecordingPath } from './types';
 import { createMessageHandler } from './background-logic';
 import type { ChromeAPIs } from './background-logic';
 import {
-  createChromiumOffscreenRecorderHost,
   createDefaultChromiumDeps,
 } from './recorder-host-chromium';
-import type { HostStopResult } from './recorder-host';
+import {
+  selectHost,
+  targetForPath,
+  type HostStopResult,
+  type RecorderHost,
+  type SelectedHost,
+  type Target,
+} from './recorder-host';
 
-// --- Chromium offscreen recorder host (port-routed effects) ---------------
+// --- Selected host (port-routed effects, picked on first start-recording) ----
 
+// Default to chromium so the first stop-before-start path doesn't crash.
+// The path-derived selection runs in the chrome.runtime.onMessage listener.
+let selectedHost: RecorderHost & SelectedHost = selectHost('chromium');
+
+// Chromium-only deps reused for offscreen-doc lifecycle (close + raw
+// sendMessageToOffscreen pass-through). The Firefox host owns its own
+// internal lifecycle and never touches these.
 const chromiumDeps = createDefaultChromiumDeps();
-const chromiumHost = createChromiumOffscreenRecorderHost(chromiumDeps);
 
 /**
  * Convert a HostStopResult back to the OffscreenToSW shape that
@@ -49,27 +68,34 @@ const chromeAPIs: ChromeAPIs = {
     return tab?.id != null ? { id: tab.id } : null;
   },
 
-  // start-recording effect routed through chromiumHost.start so the SW state
-  // machine stays target-blind. Returns void to match the existing port shape.
+  // start-recording effect routed through selectedHost.start so the SW
+  // state machine stays target-blind. The bundle's buildStartInput()
+  // produces the correct HostStartInput variant -- on Chromium the
+  // streamId is forwarded; on Firefox the streamId is discarded because
+  // the host runs getDisplayMedia internally. Returns void to match the
+  // existing port shape.
   createOffscreenDocument: async (streamId: string) => {
-    const result = await chromiumHost.start({ target: 'chromium', streamId });
+    const input = selectedHost.buildStartInput(streamId);
+    const result = await selectedHost.host.start(input);
     if (!result.ok) {
-      // Picker-cancelled is a Firefox concern; on Chromium start always
-      // resolves with ok:true. Defensive throw if a future change breaks
-      // that invariant.
-      throw new Error(`ChromiumOffscreenRecorderHost.start failed: ${result.cause}`);
+      // picker-cancelled on Firefox is a normal user choice. We swallow
+      // it here and let the SW state-machine's stop/timeout handlers
+      // bring the popup back to idle. Other failures are logged but not
+      // rethrown (the offscreen-error / timeout paths surface them).
+      console.log('[sw] host.start non-ok result:', result.cause);
     }
   },
 
   closeOffscreenDocument: chromiumDeps.closeOffscreenDocument,
 
-  // stop-recording effect routed through chromiumHost.stop, which encapsulates
-  // sendMessage + response shaping. Other SW->offscreen messages bypass the
-  // host (none today; offscreen-stop is the only message in SWToOffscreen
-  // besides offscreen-start, which the offscreen doc auto-receives via URL).
+  // stop-recording effect routed through selectedHost.stop, which
+  // encapsulates the target-specific stop pipeline. Other SW->offscreen
+  // messages bypass the host (none today; offscreen-stop is the only
+  // message in SWToOffscreen besides offscreen-start, which the offscreen
+  // doc auto-receives via URL on Chromium and is irrelevant on Firefox).
   sendMessageToOffscreen: async (message: SWToOffscreen) => {
     if (message.type === 'offscreen-stop') {
-      const hostResult = await chromiumHost.stop();
+      const hostResult = await selectedHost.host.stop();
       return hostResultToOffscreenMessage(hostResult);
     }
     return chromiumDeps.sendMessageToOffscreen(message);
@@ -119,9 +145,32 @@ const chromeAPIs: ChromeAPIs = {
 
 const handleMessage = createMessageHandler(chromeAPIs);
 
+/**
+ * Re-select the host adapter for an incoming start-recording message.
+ * Re-selection only happens when the target actually changes, so each
+ * Chromium-only or Firefox-only session reuses a single host instance.
+ * This is the consumption side of selectHost being the SINGLE
+ * target-branching site -- no further `target ===` reasoning lives here.
+ */
+const ensureHostForPath = (path: RecordingPath): void => {
+  const nextTarget: Target = targetForPath(path);
+  if (nextTarget !== selectedHost.target) {
+    selectedHost = selectHost(nextTarget);
+  }
+};
+
 chrome.runtime.onMessage.addListener(
   (message: Message, _sender, sendResponse) => {
     console.log('[sw] Received message:', JSON.stringify(message));
+
+    // Route start-recording through the path-derived host BEFORE the
+    // target-blind state machine consumes the message. The streamId (if
+    // any) flows through the existing ChromeAPIs.createOffscreenDocument
+    // contract; the host's buildStartInput discards it on Firefox.
+    if (message.type === 'start-recording') {
+      ensureHostForPath(message.path);
+    }
+
     handleMessage(message)
       .then((response) => {
         console.log('[sw] Handled message:', message.type, '-> response:', response?.type);

@@ -44,14 +44,21 @@ describe('popup-logic', () => {
   });
 
   describe('messageForAction', () => {
-    it('creates start-recording message for start action with streamId', () => {
-      const message = messageForAction('start', 'stream-42');
-      expect(message).toEqual({ type: 'start-recording', streamId: 'stream-42' });
+    it('creates chromium start-recording message with path and streamId when path=chromium-offscreen', () => {
+      const message = messageForAction('start', 'chromium-offscreen', 'stream-42');
+      expect(message).toEqual({
+        type: 'start-recording',
+        path: 'chromium-offscreen',
+        streamId: 'stream-42',
+      });
     });
 
-    it('creates start-recording message with empty streamId when none provided', () => {
-      const message = messageForAction('start');
-      expect(message).toEqual({ type: 'start-recording', streamId: '' });
+    it('creates firefox start-recording message with path only (no streamId) when path=firefox-display-media', () => {
+      const message = messageForAction('start', 'firefox-display-media');
+      expect(message).toEqual({
+        type: 'start-recording',
+        path: 'firefox-display-media',
+      });
     });
 
     it('creates stop-recording message for stop action', () => {
@@ -150,7 +157,7 @@ describe('popup wiring', () => {
     expect(mockStatus.textContent).toBe('Error: Tab not found');
   });
 
-  it('sends start-recording when start button is clicked', async () => {
+  it('sends chromium-path start-recording with streamId when start button is clicked on the chromium path', async () => {
     let clickHandler: (() => void) | undefined;
     const mockButton = {
       textContent: '',
@@ -166,7 +173,15 @@ describe('popup wiring', () => {
       state: { status: 'idle' },
     } satisfies SWToPopup);
 
-    await initializePopup(mockButton, mockStatus, mockSendMessage, mockGetStreamId);
+    await initializePopup(
+      mockButton,
+      mockStatus,
+      mockSendMessage,
+      mockGetStreamId,
+      undefined,
+      undefined,
+      () => ({ supported: true, path: 'chromium-offscreen' }),
+    );
 
     // Simulate click
     expect(clickHandler).toBeDefined();
@@ -177,7 +192,54 @@ describe('popup wiring', () => {
     await clickHandler!();
 
     expect(mockGetStreamId).toHaveBeenCalledOnce();
-    expect(mockSendMessage).toHaveBeenCalledWith({ type: 'start-recording', streamId: 'test-stream-id' });
+    expect(mockSendMessage).toHaveBeenCalledWith({
+      type: 'start-recording',
+      path: 'chromium-offscreen',
+      streamId: 'test-stream-id',
+    });
+  });
+
+  it('sends firefox-path start-recording with no streamId when start button is clicked on the firefox path', async () => {
+    let clickHandler: (() => void) | undefined;
+    const mockButton = {
+      textContent: '',
+      disabled: false,
+      addEventListener: vi.fn((event: string, handler: () => void) => {
+        if (event === 'click') clickHandler = handler;
+      }),
+    };
+    const mockStatus = { textContent: '' };
+    const mockHint = { textContent: '', hidden: true };
+
+    mockSendMessage.mockResolvedValue({
+      type: 'state-update',
+      state: { status: 'idle' },
+    } satisfies SWToPopup);
+
+    await initializePopup(
+      mockButton,
+      mockStatus,
+      mockSendMessage,
+      mockGetStreamId,
+      undefined,
+      undefined,
+      () => ({ supported: true, path: 'firefox-display-media' }),
+      mockHint,
+    );
+
+    expect(clickHandler).toBeDefined();
+    mockSendMessage.mockResolvedValue({
+      type: 'state-update',
+      state: { status: 'recording', tabId: -1, startTime: Date.now() },
+    });
+    await clickHandler!();
+
+    // Firefox host runs getDisplayMedia internally; popup must NOT call getStreamId.
+    expect(mockGetStreamId).not.toHaveBeenCalled();
+    expect(mockSendMessage).toHaveBeenCalledWith({
+      type: 'start-recording',
+      path: 'firefox-display-media',
+    });
   });
 
   it('sends stop-recording when stop button is clicked', async () => {

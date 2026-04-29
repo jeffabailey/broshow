@@ -215,4 +215,30 @@ describe('AC-FF-06 selectHost is the single platform branch', () => {
     expect(typeof chromiumHost.start).toBe('function');
     expect(typeof firefoxHost.start).toBe('function');
   });
+
+  it('selectHost("firefox") returns a real Firefox host (no longer a not-implemented stub)', async () => {
+    // Driving port: selectHost(target) -- step 02-02 wires the real Firefox
+    // adapter behind selectHost so the SW dispatches start/stop on the
+    // returned RecorderHost without further branching. The not-implemented
+    // stub previously returned threw a recognizable error from start();
+    // the real adapter does NOT throw that sentinel and instead either
+    // resolves with a port-shaped result or surfaces the underlying
+    // getDisplayMedia / chrome.runtime error.
+    const host = selectHost('firefox');
+    let observedError: unknown = null;
+    try {
+      // chrome.runtime.sendMessage is undefined in the unit-test env, so
+      // start() will resolve via the createOffscreenMessageHandler error
+      // path -- but it must NOT match the not-implemented stub's exact
+      // error message. The behavior we pin is: selectHost('firefox') now
+      // dispatches into the Firefox adapter pipeline rather than the
+      // sentinel stub.
+      await host.start({ target: 'firefox' });
+    } catch (error) {
+      observedError = error;
+    }
+    if (observedError instanceof Error) {
+      expect(observedError.message).not.toContain('not yet implemented');
+    }
+  });
 });

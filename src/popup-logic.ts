@@ -7,7 +7,11 @@
 // - Wiring function that connects DOM elements to pure logic
 // ---------------------------------------------------------------------------
 
-import type { RecordingState, PopupToSW, SWToPopup } from './types';
+import type { RecordingState, PopupToSW, SWToPopup, RecordingPath } from './types';
+
+// Re-export RecordingPath so existing imports from popup-logic continue to
+// resolve without churn. The canonical home is types.ts (wire-format types).
+export type { RecordingPath };
 
 // --- Types -----------------------------------------------------------------
 
@@ -25,19 +29,6 @@ export type UIDescription = {
 type SendMessage = (message: PopupToSW) => Promise<SWToPopup>;
 type GetStreamId = () => Promise<string>;
 type OnMessage = (handler: (message: SWToPopup) => void) => void;
-
-/**
- * The recording path selected by the runtime feature-detect probe.
- *
- * - `chromium-offscreen`: Chromium pipeline using chrome.offscreen +
- *   chrome.tabCapture (the original BroShow path).
- * - `firefox-display-media`: Firefox pipeline using
- *   navigator.mediaDevices.getDisplayMedia + MediaRecorder hosted in the
- *   background page.
- *
- * See `docs/feature/firefox-recording-support/design/data-models.md` §2.
- */
-export type RecordingPath = 'chromium-offscreen' | 'firefox-display-media';
 
 export type CapabilityCheckResult =
   | { readonly supported: true; readonly path: 'chromium-offscreen' }
@@ -154,16 +145,52 @@ export const describeUI = (state: RecordingState): UIDescription => {
   }
 };
 
-/** Map a PopupAction to the corresponding message for the service worker.
- *  The 'start' action requires a streamId obtained from tabCapture. */
-export const messageForAction = (action: PopupAction, streamId?: string): PopupToSW => {
-  switch (action) {
-    case 'start':
-      return { type: 'start-recording', streamId: streamId ?? '' };
-    case 'stop':
-      return { type: 'stop-recording' };
+/**
+ * Map a PopupAction (plus optional path discriminant + streamId) to the
+ * corresponding message for the service worker. Per data-models.md §3 the
+ * start-recording message is a discriminated union by `path`:
+ *
+ *   { type: 'start-recording', path: 'chromium-offscreen', streamId }
+ *   { type: 'start-recording', path: 'firefox-display-media' }            // no streamId
+ *
+ * Overloaded forms:
+ *   messageForAction('start', 'chromium-offscreen', streamId) -> chromium variant
+ *   messageForAction('start', 'firefox-display-media')        -> firefox variant
+ *   messageForAction('stop')                                  -> stop-recording
+ *
+ * No new branch on Target -- pattern-matches on path and produces the
+ * matching wire variant. background-logic stays target-blind.
+ */
+export function messageForAction(action: 'stop'): PopupToSW;
+export function messageForAction(
+  action: 'start',
+  path: 'chromium-offscreen',
+  streamId: string,
+): PopupToSW;
+export function messageForAction(
+  action: 'start',
+  path: 'firefox-display-media',
+): PopupToSW;
+export function messageForAction(
+  action: PopupAction,
+  path?: RecordingPath,
+  streamId?: string,
+): PopupToSW {
+  if (action === 'stop') {
+    return { type: 'stop-recording' };
   }
-};
+  // action === 'start'
+  if (path === 'firefox-display-media') {
+    return { type: 'start-recording', path: 'firefox-display-media' };
+  }
+  // Default to the chromium variant for safety; the popup adapter always
+  // supplies a path when the capability probe ran.
+  return {
+    type: 'start-recording',
+    path: 'chromium-offscreen',
+    streamId: streamId ?? '',
+  };
+}
 
 /** Apply a UIDescription to DOM elements. */
 const applyUI = (
@@ -223,6 +250,10 @@ export const initializePopup = async (
   // (e.g., Firefox has no chrome.offscreen / chrome.tabCapture). Shows the
   // user a clear message instead of letting the SW path get stuck on the
   // never-resolving offscreen handshake.
+  //
+  // Default to chromium-offscreen path when no probe is supplied (legacy
+  // callers without capability detection wired in -- backwards-compatible).
+  let capabilityPath: RecordingPath = 'chromium-offscreen';
   if (capabilityCheck) {
     const capability = capabilityCheck();
     if (!capability.supported) {
@@ -231,6 +262,7 @@ export const initializePopup = async (
       status.textContent = `Error: ${capability.reason}`;
       return;
     }
+    capabilityPath = capability.path;
     // On the Firefox path, surface the AC-FF-04 hint so the user knows the
     // surface picker (tab/window/screen) is about to appear. Chromium path
     // leaves the hint untouched (hidden by default).
@@ -255,13 +287,22 @@ export const initializePopup = async (
     if (currentAction === null) return;
 
     try {
-      // For start action, obtain the streamId from the popup's user gesture context
-      let streamId: string | undefined;
+      // For start action, obtain the streamId from the popup's user-gesture
+      // context only on the Chromium path. The Firefox host runs
+      // getDisplayMedia internally inside the background event page, so
+      // streamId is irrelevant on that path -- per data-models.md §3.
+      let message: PopupToSW;
       if (currentAction === 'start') {
-        streamId = await getStreamId();
+        if (capabilityPath === 'firefox-display-media') {
+          message = messageForAction('start', 'firefox-display-media');
+        } else {
+          const streamId = await getStreamId();
+          message = messageForAction('start', 'chromium-offscreen', streamId);
+        }
+      } else {
+        message = messageForAction('stop');
       }
 
-      const message = messageForAction(currentAction, streamId);
       const clickResponse = await sendMessage(message);
       currentAction = handleResponse(button, status, fallbackNotice, clickResponse);
     } catch (error: unknown) {

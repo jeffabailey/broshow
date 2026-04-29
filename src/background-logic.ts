@@ -233,8 +233,15 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
           return { type: 'error', message: 'No active tab found' };
         }
 
-        // streamId is provided by the popup (which has the user gesture context)
-        const { streamId } = message;
+        // streamId is provided by the popup on the Chromium path only
+        // (it has the user-gesture context for chrome.tabCapture). On the
+        // Firefox path the message has no streamId; the host runs
+        // getDisplayMedia internally. Use empty string as the wire-level
+        // sentinel; the recorder-host adapter discards streamId on Firefox.
+        // background-logic stays target-blind: it just forwards whatever
+        // streamId arrives (or '') through the existing offscreen-start
+        // contract.
+        const streamId = 'streamId' in message ? message.streamId : '';
 
         // Pure: compute state transition
         const result = handleStartRecording(state, tab.id, streamId, apis.now());

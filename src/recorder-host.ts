@@ -11,10 +11,16 @@
 // port shape, never on a target.
 // ---------------------------------------------------------------------------
 
+import type { RecordingPath } from './types';
 import {
   createChromiumOffscreenRecorderHost,
   createDefaultChromiumDeps,
 } from './recorder-host-chromium';
+import {
+  createFirefoxBackgroundRecorderHost,
+  createDefaultFirefoxDeps,
+} from './recorder-host-firefox';
+import { createRecordingSession } from './mp4';
 
 export type Target = 'chromium' | 'firefox';
 
@@ -36,29 +42,79 @@ export type RecorderHost = {
 };
 
 /**
- * Stub host returned for targets whose adapter is not yet implemented
- * (Firefox lands in step 02-01). Honors the port shape so callers can
- * still pattern-match on results -- start/stop yield port-shaped values
- * rather than crashing the caller chain.
+ * The selected host bundle returned by selectHostForPath. Bundles the
+ * RecorderHost with a target-aware HostStartInput builder so the caller
+ * can dispatch start/stop without any further branch on Target.
+ *
+ * This is what makes selectHost the SINGLE target-branching site in the
+ * project: the path->target->input dispatch happens here, once, and the
+ * caller (background.ts) consumes only the bundle's polymorphic operations.
  */
-const createNotImplementedHost = (target: Target): RecorderHost => ({
-  start: async () => {
-    throw new Error(`RecorderHost not yet implemented for target: ${target}`);
-  },
-  stop: async () => {
-    throw new Error(`RecorderHost not yet implemented for target: ${target}`);
-  },
-});
+export type SelectedHost = {
+  readonly target: Target;
+  readonly host: RecorderHost;
+  readonly buildStartInput: (streamId: string) => HostStartInput;
+};
 
 /**
- * Pick the recorder-host adapter for the runtime target.
- * The single platform branch in the codebase (component-boundaries.md §3.3).
+ * Pick the recorder-host adapter AND its Target-aware HostStartInput
+ * builder in one switch. This is the SINGLE target-branching site in the
+ * codebase (component-boundaries.md §3.3, design D16). All callers depend
+ * on the returned port shape -- never on Target.
+ *
+ * Backwards-compatible shape: the returned value is BOTH a RecorderHost
+ * (start, stop) AND a SelectedHost bundle (target, host, buildStartInput).
+ * Existing callers using `selectHost(target).start(...)` continue to work;
+ * new callers can use selectHost(target).buildStartInput(streamId) to
+ * obtain a Target-aware HostStartInput without re-branching.
  */
-export const selectHost = (target: Target): RecorderHost => {
+export const selectHost = (target: Target): RecorderHost & SelectedHost => {
   switch (target) {
-    case 'chromium':
-      return createChromiumOffscreenRecorderHost(createDefaultChromiumDeps());
-    case 'firefox':
-      return createNotImplementedHost('firefox');
+    case 'chromium': {
+      const host = createChromiumOffscreenRecorderHost(createDefaultChromiumDeps());
+      return {
+        target: 'chromium',
+        host,
+        start: host.start,
+        stop: host.stop,
+        buildStartInput: (streamId: string) => ({ target: 'chromium', streamId }),
+      };
+    }
+    case 'firefox': {
+      const host = createFirefoxBackgroundRecorderHost(
+        createDefaultFirefoxDeps(createRecordingSession),
+      );
+      return {
+        target: 'firefox',
+        host,
+        start: host.start,
+        stop: host.stop,
+        buildStartInput: () => ({ target: 'firefox' }),
+      };
+    }
   }
 };
+
+/**
+ * Pure mapping from the popup's RecordingPath wire-discriminant to the
+ * adapter Target. Path-narrowing only -- no Target reasoning.
+ *
+ * 'chromium-offscreen'   -> 'chromium'
+ * 'firefox-display-media'-> 'firefox'
+ */
+export const targetForPath = (path: RecordingPath): Target => {
+  switch (path) {
+    case 'chromium-offscreen':
+      return 'chromium';
+    case 'firefox-display-media':
+      return 'firefox';
+  }
+};
+
+/**
+ * Convenience composition: resolve the host bundle directly from the
+ * popup's start-recording wire-discriminant. background.ts uses this
+ * on the first start-recording message of a session.
+ */
+export const selectHostForPath = (path: RecordingPath): RecorderHost & SelectedHost =>
+  selectHost(targetForPath(path));
