@@ -57,9 +57,25 @@ jobs:
           cd dist
           zip -r "../broshow-chrome-${{ steps.version.outputs.version }}.zip" .
 
+      - name: Stage Firefox build
+        run: |
+          cp -r dist firefox-dist
+          node -e "
+            const fs = require('fs');
+            const path = 'firefox-dist/manifest.json';
+            const m = JSON.parse(fs.readFileSync(path, 'utf8'));
+            m.browser_specific_settings = {
+              gecko: {
+                id: 'broshow@jeffabailey.com',
+                strict_min_version: '121.0'
+              }
+            };
+            fs.writeFileSync(path, JSON.stringify(m, null, 2) + '\n');
+          "
+
       - name: Package Firefox xpi
         run: |
-          cd dist
+          cd firefox-dist
           zip -r "../broshow-firefox-${{ steps.version.outputs.version }}.xpi" .
 
       - name: Create or update release
