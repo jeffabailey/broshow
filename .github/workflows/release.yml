@@ -60,22 +60,10 @@ jobs:
       - name: Stage Firefox build
         run: |
           cp -r dist firefox-dist
-          node -e "
-            const fs = require('fs');
-            const path = 'firefox-dist/manifest.json';
-            const m = JSON.parse(fs.readFileSync(path, 'utf8'));
-            m.browser_specific_settings = {
-              gecko: {
-                id: 'broshow@jeffabailey.com',
-                strict_min_version: '121.0'
-              }
-            };
-            m.background.scripts = ['background.js'];
-            fs.writeFileSync(path, JSON.stringify(m, null, 2) + '\n');
-          "
+          node scripts/patch-firefox-manifest.mjs firefox-dist/manifest.json
 
       - name: Lint Firefox build
-        run: npx --yes web-ext lint --source-dir firefox-dist --warnings-as-errors=false
+        run: npx web-ext lint --source-dir firefox-dist --warnings-as-errors=false
 
       - name: Package Firefox xpi
         run: |
