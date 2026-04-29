@@ -1,0 +1,93 @@
+journey:
+  name: record-screen
+  description: >
+    User selects a capture source (tab, screen, or window),
+    records content, and downloads the mp4 file.
+  actors:
+    - browser-user
+  preconditions:
+    - BroShow extension installed
+    - Browser supports getDisplayMedia (Chromium 72+)
+
+  steps:
+    - id: open-popup
+      action: Click BroShow extension icon
+      artifact_produced: "${popup-state}"
+      emotion: neutral
+      ui: Popup opens with source selector and record button
+
+    - id: choose-source
+      action: Select capture mode
+      artifact_produced: "${capture-mode}"
+      artifact_values: ["tab", "screen"]
+      emotion: empowered
+      ui: Toggle/radio with "This Tab" (default) and "Screen / Window"
+      note: Selection persists in chrome.storage.local
+
+    - id: grant-permission-tab
+      condition: capture-mode = 'tab'
+      action: Browser shows tab-sharing prompt
+      artifact_consumed: "${capture-mode}"
+      artifact_produced: "${stream-id}"
+      emotion: brief-tension
+      ui: Chrome tab-sharing prompt
+      error:
+        - condition: User cancels prompt
+          recovery: Return to idle, show "Permission denied"
+
+    - id: grant-permission-screen
+      condition: capture-mode = 'screen'
+      action: Browser shows screen/window picker
+      artifact_consumed: "${capture-mode}"
+      artifact_produced: "${media-stream}"
+      emotion: brief-tension
+      ui: getDisplayMedia picker showing screens and application windows
+      error:
+        - condition: User cancels picker
+          recovery: Return to idle, show "Permission denied"
+
+    - id: recording-active
+      action: MediaRecorder captures selected source
+      artifact_consumed: "${stream-id} OR ${media-stream}"
+      artifact_produced: "${recording-state}"
+      emotion: confident
+      ui: Stop button visible, status shows "Recording..."
+      note: Screen/window recording persists across tab switches
+
+    - id: stop-and-process
+      action: User clicks Stop
+      artifact_consumed: "${recording-state}"
+      artifact_produced: "${recording-blob}"
+      emotion: anticipation
+      ui: Button disabled, status shows "Processing..."
+      error:
+        - condition: mp4 muxing fails
+          recovery: Fall back to WebM download
+
+    - id: download
+      action: Auto-download mp4 file
+      artifact_consumed: "${recording-blob}"
+      artifact_produced: "${filename}"
+      emotion: satisfied
+      ui: Returns to idle with source selector
+
+  error_paths:
+    - id: permission-denied
+      trigger_step: grant-permission
+      condition: User cancels browser prompt
+      recovery: Return to idle with message
+
+    - id: stream-ended
+      trigger_step: recording-active
+      condition: Source stream ends unexpectedly (window closed, screen disconnected)
+      recovery: Auto-stop recording, process captured data
+
+    - id: api-unsupported
+      trigger_step: choose-source
+      condition: getDisplayMedia not available
+      recovery: Hide "Screen / Window" option, tab-only mode
+
+    - id: muxing-failure
+      trigger_step: stop-and-process
+      condition: mp4 muxing throws error
+      recovery: Download WebM fallback with notice

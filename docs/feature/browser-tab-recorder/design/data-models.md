@@ -1,4 +1,4 @@
-# Data Models: BroRecord
+# Data Models: BroShow
 
 ## Recording State
 
@@ -46,7 +46,7 @@ type Message = PopupToSW | SWToPopup | SWToOffscreen | OffscreenToSW
 ```typescript
 type DownloadInfo = {
   url: string           // blob: URL
-  filename: string      // e.g., "brorecord-2026-03-22-143052.mp4"
+  filename: string      // e.g., "broshow-2026-03-22-143052.mp4"
   mimeType: string      // "video/mp4" or "video/webm"
 }
 ```

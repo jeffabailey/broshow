@@ -1,4 +1,4 @@
-# Requirements: browser-tab-recorder (BroRecord)
+# Requirements: browser-tab-recorder (BroShow)
 
 ## Functional Requirements
 
@@ -15,7 +15,7 @@ The extension MUST provide start and stop controls via the extension popup.
 The extension MUST save recordings as mp4 (H.264 video + AAC audio). If mp4 muxing fails, the extension MUST fall back to WebM and inform the user.
 
 ### FR-05: Automatic Download
-When recording stops, the extension MUST trigger a browser download of the file with a timestamped filename (e.g., `brorecord-2026-03-22-143052.mp4`).
+When recording stops, the extension MUST trigger a browser download of the file with a timestamped filename (e.g., `broshow-2026-03-22-143052.mp4`).
 
 ### FR-06: Recording Indicator
 The extension MUST show a visual indicator (badge/icon change) while recording is active.

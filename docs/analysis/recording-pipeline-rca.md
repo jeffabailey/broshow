@@ -1,4 +1,4 @@
-# Root Cause Analysis: BroRecord Recording Pipeline Failure
+# Root Cause Analysis: BroShow Recording Pipeline Failure
 
 **Date**: 2026-03-22
 **Analyst**: Rex (RCA Specialist)
@@ -6,7 +6,7 @@
 
 ## Problem Statement
 
-BroRecord Chrome extension recording pipeline fails to produce a downloaded file when a user clicks Start then Stop. The pipeline involves popup -> service worker -> offscreen document -> MediaRecorder -> storage -> download. Manual testing shows "Processing recording..." stuck state. Automated Playwright tests show `offscreen-error: "No active recording session"` on stop. Unit tests (73) all pass; 4/5 acceptance tests pass; the full pipeline test fails.
+BroShow Chrome extension recording pipeline fails to produce a downloaded file when a user clicks Start then Stop. The pipeline involves popup -> service worker -> offscreen document -> MediaRecorder -> storage -> download. Manual testing shows "Processing recording..." stuck state. Automated Playwright tests show `offscreen-error: "No active recording session"` on stop. Unit tests (73) all pass; 4/5 acceptance tests pass; the full pipeline test fails.
 
 **Scope**: The recording pipeline from Start click through to file download. Affected in both manual (web-ext) and automated (Playwright) environments.
 

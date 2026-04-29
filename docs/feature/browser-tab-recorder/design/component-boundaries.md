@@ -1,4 +1,4 @@
-# Component Boundaries: BroRecord
+# Component Boundaries: BroShow
 
 ## Components
 

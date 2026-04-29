@@ -5,11 +5,11 @@ Feature: Record a browser tab as mp4
   So that I can archive or share tab content without complex tools
 
   Background:
-    Given the BroRecord extension is installed
-    And the browser toolbar shows the BroRecord icon
+    Given the BroShow extension is installed
+    And the browser toolbar shows the BroShow icon
 
   Scenario: Happy path - record and save a tab
-    When I click the BroRecord extension icon
+    When I click the BroShow extension icon
     Then I see a popup with a "Start Recording" button
     When I click "Start Recording"
     Then the browser prompts me to share the current tab
@@ -21,7 +21,7 @@ Feature: Record a browser tab as mp4
     And an mp4 file is downloaded with a timestamped filename
 
   Scenario: User denies tab capture permission
-    When I click the BroRecord extension icon
+    When I click the BroShow extension icon
     And I click "Start Recording"
     And I deny the tab sharing prompt
     Then I see a message explaining permission is needed

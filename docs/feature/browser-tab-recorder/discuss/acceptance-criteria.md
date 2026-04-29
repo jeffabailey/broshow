@@ -4,7 +4,7 @@
 
 ### AC-01: Complete Recording Flow
 ```gherkin
-Given the BroRecord extension is installed in a Chromium browser
+Given the BroShow extension is installed in a Chromium browser
 When I click the extension icon
 And I click "Start Recording"
 And I grant tab capture permission
@@ -16,7 +16,7 @@ And the file plays back correctly with video and audio
 
 ### AC-02: Permission Denial Recovery
 ```gherkin
-Given the BroRecord extension is installed
+Given the BroShow extension is installed
 When I click "Start Recording"
 And I deny the tab capture permission
 Then I see an error message about needing permission
@@ -56,7 +56,7 @@ Then no outbound network requests are made at any point
 
 ### AC-07: Brave Browser Compatibility
 ```gherkin
-Given the BroRecord extension is installed in Brave browser
+Given the BroShow extension is installed in Brave browser
 When I perform a complete recording flow
 Then the behavior is identical to Chrome
 ```
@@ -65,6 +65,6 @@ Then the behavior is identical to Chrome
 ```gherkin
 Given I complete a recording
 When the file is downloaded
-Then the filename matches the pattern brorecord-YYYY-MM-DD-HHmmss.mp4
+Then the filename matches the pattern broshow-YYYY-MM-DD-HHmmss.mp4
 And the timestamp reflects my local time
 ```

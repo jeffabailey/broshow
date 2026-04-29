@@ -4,7 +4,7 @@
 
 ### US-01: Install Extension
 **As a** browser user
-**I want to** install the BroRecord extension
+**I want to** install the BroShow extension
 **So that** the recording tool is available in my toolbar
 
 **Job trace**: Primary Job (one-click tab recording)
@@ -124,7 +124,7 @@
 **Job trace**: Primary Job
 
 **Acceptance Criteria**:
-- [ ] Filename follows pattern: `brorecord-YYYY-MM-DD-HHmmss.mp4`
+- [ ] Filename follows pattern: `broshow-YYYY-MM-DD-HHmmss.mp4`
 - [ ] Filename uses local timezone
 
 ---
@@ -133,7 +133,7 @@
 
 ### US-10: Firefox Compatibility
 **As a** Firefox user
-**I want to** use BroRecord in Firefox
+**I want to** use BroShow in Firefox
 **So that** I'm not locked into Chromium browsers
 
 **Job trace**: Primary Job

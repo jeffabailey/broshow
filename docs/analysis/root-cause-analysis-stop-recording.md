@@ -8,7 +8,7 @@
 
 ## Problem Statement
 
-After clicking "Stop Recording" in the BroRecord Chrome MV3 extension, no file is downloaded. The UI either stays in "Processing..." state indefinitely or returns to idle ("Ready to record") without producing a download.
+After clicking "Stop Recording" in the BroShow Chrome MV3 extension, no file is downloaded. The UI either stays in "Processing..." state indefinitely or returns to idle ("Ready to record") without producing a download.
 
 **Scope**: Stop-recording flow from popup click through offscreen document processing to `chrome.downloads.download()` call. Excludes start-recording flow (verified working).
 
@@ -209,8 +209,8 @@ This means path 1 is the ONLY path that delivers the result to the SW's handler 
 
 ## Appendix: Key File Locations
 
-- `/Users/jeffbailey/Projects/foss/leading/brorecord/src/background-logic.ts` -- SW message handler, fire-and-forget at L208-211
-- `/Users/jeffbailey/Projects/foss/leading/brorecord/src/background.ts` -- Chrome API adapters, broadcast-based sendMessageToOffscreen at L36-37
-- `/Users/jeffbailey/Projects/foss/leading/brorecord/src/offscreen-logic.ts` -- handleStop at L79-110, dual message send (broadcast + return)
-- `/Users/jeffbailey/Projects/foss/leading/brorecord/src/offscreen.ts` -- Message listener with sendResponse at L75-77
-- `/Users/jeffbailey/Projects/foss/leading/brorecord/src/mp4.ts` -- WebCodecs decoderConfig check at L138, MediaRecorder stop at L179-193
+- `/Users/jeffbailey/Projects/foss/leading/broshow/src/background-logic.ts` -- SW message handler, fire-and-forget at L208-211
+- `/Users/jeffbailey/Projects/foss/leading/broshow/src/background.ts` -- Chrome API adapters, broadcast-based sendMessageToOffscreen at L36-37
+- `/Users/jeffbailey/Projects/foss/leading/broshow/src/offscreen-logic.ts` -- handleStop at L79-110, dual message send (broadcast + return)
+- `/Users/jeffbailey/Projects/foss/leading/broshow/src/offscreen.ts` -- Message listener with sendResponse at L75-77
+- `/Users/jeffbailey/Projects/foss/leading/broshow/src/mp4.ts` -- WebCodecs decoderConfig check at L138, MediaRecorder stop at L179-193

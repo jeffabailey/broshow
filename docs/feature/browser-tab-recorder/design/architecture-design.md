@@ -1,4 +1,4 @@
-# Architecture Design: BroRecord (browser-tab-recorder)
+# Architecture Design: BroShow (browser-tab-recorder)
 
 ## Architecture Drivers
 
@@ -26,17 +26,17 @@ Each stage is a pure-ish function (some are inherently effectful due to browser 
 
 ```mermaid
 C4Context
-    title System Context: BroRecord
+    title System Context: BroShow
 
     Person(user, "Browser User", "Wants to record a browser tab as mp4")
 
-    System(brorecord, "BroRecord Extension", "Browser extension that captures tab content and saves as mp4")
+    System(broshow, "BroShow Extension", "Browser extension that captures tab content and saves as mp4")
 
     System_Ext(browser, "Chromium Browser", "Chrome, Brave, Edge — provides tabCapture API and downloads API")
     System_Ext(filesystem, "Local Filesystem", "Where mp4 files are saved via browser downloads")
 
-    Rel(user, brorecord, "Clicks Start/Stop Recording")
-    Rel(brorecord, browser, "Uses tabCapture, downloads APIs")
+    Rel(user, broshow, "Clicks Start/Stop Recording")
+    Rel(broshow, browser, "Uses tabCapture, downloads APIs")
     Rel(browser, filesystem, "Saves mp4 file")
 ```
 
@@ -44,11 +44,11 @@ C4Context
 
 ```mermaid
 C4Container
-    title Container Diagram: BroRecord
+    title Container Diagram: BroShow
 
     Person(user, "Browser User")
 
-    System_Boundary(ext, "BroRecord Extension") {
+    System_Boundary(ext, "BroShow Extension") {
         Container(popup, "Popup UI", "HTML + TypeScript", "Start/Stop button, status display. Minimal UI.")
         Container(sw, "Service Worker", "TypeScript", "Orchestrates recording lifecycle. Manages state across popup open/close cycles.")
         Container(offscreen, "Offscreen Document", "HTML + TypeScript", "Hosts MediaRecorder and mp4 muxer. Required because MV3 service workers cannot access MediaRecorder.")

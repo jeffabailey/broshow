@@ -1,4 +1,4 @@
-# Root Cause Analysis: BroRecord Video Recording Pipeline
+# Root Cause Analysis: BroShow Video Recording Pipeline
 
 **Date**: 2026-03-22
 **Analyst**: Rex (RCA Specialist)
@@ -7,7 +7,7 @@
 
 ## Problem Statement
 
-BroRecord Chrome extension does not produce a working video recording. The goal is to record a browser tab and save as MP4. The pipeline involves: popup (user gesture + streamId) -> service worker (orchestration) -> offscreen document (MediaRecorder/WebCodecs capture) -> chrome.storage.local (data transfer) -> chrome.downloads (file save).
+BroShow Chrome extension does not produce a working video recording. The goal is to record a browser tab and save as MP4. The pipeline involves: popup (user gesture + streamId) -> service worker (orchestration) -> offscreen document (MediaRecorder/WebCodecs capture) -> chrome.storage.local (data transfer) -> chrome.downloads (file save).
 
 **Scope**: Full recording pipeline from Start click through file download. Includes both manual (web-ext) and automated (Playwright) environments.
 
