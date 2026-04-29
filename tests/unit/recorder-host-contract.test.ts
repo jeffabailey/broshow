@@ -90,6 +90,7 @@ const createDefaultFirefoxTestDeps = (
     .fn<(constraints: MediaStreamConstraints) => Promise<MediaStream>>()
     .mockResolvedValue(createMockStream({ audioTracks: 1, videoTracks: 1 })),
   storeRecording: vi.fn<(blob: Blob) => Promise<boolean>>().mockResolvedValue(false),
+  getRecordingData: vi.fn<() => Promise<string | null>>().mockResolvedValue(null),
   blobToDataUrl: vi
     .fn<(blob: Blob) => Promise<string>>()
     .mockResolvedValue('data:video/mp4;base64,fake-mp4'),
@@ -170,6 +171,29 @@ describe('AC-FF-01 / AC-FF-05 stop result shape parity across adapters', () => {
       expect(result.format).toBe('mp4');
       expect(typeof result.dataUrl).toBe('string');
       expect(result.dataUrl.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('FirefoxBackgroundRecorderHost.stop reads dataUrl from chrome.storage.local when storeRecording succeeded (regression: real Firefox runtime hits this branch)', async () => {
+    // Bug: real chrome.storage.local on Firefox returns true from
+    // storeRecording, so the offscreen handler omits dataUrl from the
+    // response message. The Firefox adapter must fall back to
+    // getRecordingData(); without it, the SW receives an empty dataUrl
+    // and silently drops the download. The Chromium adapter has this
+    // fallback (recorder-host-chromium.ts) and the Firefox adapter must
+    // mirror it for AC-FF-01 to actually fire on real runtime.
+    const storedDataUrl = 'data:video/mp4;base64,from-storage';
+    const host = createFirefoxBackgroundRecorderHost(
+      createDefaultFirefoxTestDeps({
+        storeRecording: vi.fn<(blob: Blob) => Promise<boolean>>().mockResolvedValue(true),
+        getRecordingData: vi.fn<() => Promise<string | null>>().mockResolvedValue(storedDataUrl),
+      }),
+    );
+    await host.start({ target: 'firefox' });
+    const result: HostStopResult = await host.stop();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.dataUrl).toBe(storedDataUrl);
     }
   });
 

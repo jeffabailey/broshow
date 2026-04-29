@@ -42,6 +42,7 @@ import type {
 export type FirefoxDeps = {
   readonly getDisplayMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
   readonly storeRecording: (blob: Blob) => Promise<boolean>;
+  readonly getRecordingData: () => Promise<string | null>;
   readonly blobToDataUrl: (blob: Blob) => Promise<string>;
   readonly sendMessage: (message: OffscreenToSW) => void;
   readonly createRecorder: CreateRecorder;
@@ -111,6 +112,11 @@ export const createDefaultFirefoxDeps = (
     }
   },
 
+  getRecordingData: async () => {
+    const result = await chrome.storage.local.get('recordingData');
+    return (result.recordingData as string) ?? null;
+  },
+
   blobToDataUrl: (blob: Blob) =>
     new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -177,7 +183,11 @@ export const createFirefoxBackgroundRecorderHost = (
         return { ok: false, cause: 'mux-error' };
       }
       if (response.type === 'offscreen-result') {
-        const dataUrl = response.dataUrl ?? '';
+        // The handler omits dataUrl when storeRecording succeeds (chrome.storage
+        // path) and inlines it on the message when storage fails. Mirror the
+        // chromium adapter's fallback: prefer message → storage → empty.
+        const dataUrl =
+          response.dataUrl ?? (await deps.getRecordingData()) ?? '';
         return { ok: true, format: response.format, dataUrl };
       }
       if (response.type === 'offscreen-error') {
