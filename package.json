@@ -7,6 +7,7 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "package": "node scripts/package-extensions.mjs",
+    "sign": "node scripts/sign-firefox-xpi.mjs",
     "validate": "node scripts/validate-bundles.mjs",
     "test": "vitest run",
     "test:watch": "vitest",

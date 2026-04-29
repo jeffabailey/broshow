@@ -65,10 +65,29 @@ jobs:
       - name: Lint Firefox build
         run: npx web-ext lint --source-dir firefox-dist --warnings-as-errors=false
 
-      - name: Package Firefox xpi
+      - name: Package Firefox xpi (signed via AMO if credentials are set, else unsigned)
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+          XPI_OUTPUT: broshow-firefox-${{ steps.version.outputs.version }}.xpi
         run: |
-          cd firefox-dist
-          zip -r "../broshow-firefox-${{ steps.version.outputs.version }}.xpi" .
+          if [ -n "$AMO_JWT_ISSUER" ] && [ -n "$AMO_JWT_SECRET" ]; then
+            echo "Signing xpi via AMO (unlisted channel)..."
+            mkdir -p signed
+            npx web-ext sign \
+              --source-dir firefox-dist \
+              --artifacts-dir signed \
+              --channel unlisted \
+              --api-key "$AMO_JWT_ISSUER" \
+              --api-secret "$AMO_JWT_SECRET"
+            mv signed/*.xpi "$XPI_OUTPUT"
+            echo "Signed xpi: $XPI_OUTPUT"
+          else
+            echo "::warning::AMO_JWT_ISSUER / AMO_JWT_SECRET not set; producing UNSIGNED xpi."
+            echo "::warning::Stock Firefox will refuse to install it. Set the secrets to enable signing."
+            cd firefox-dist
+            zip -r "../$XPI_OUTPUT" .
+          fi
 
       - name: Create or update release
         uses: softprops/action-gh-release@v2
