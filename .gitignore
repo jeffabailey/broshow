@@ -3,6 +3,8 @@ dist/
 packages/
 *.tsbuildinfo
 test-results
-tests/.tmp-profile
-tests/.tmp-profile-m2
+tests/.tmp-profile*
 tests/downloads/
+tests/downloads-*/
+.firefox-dev/
+docs/feature/*/deliver/.develop-progress.json

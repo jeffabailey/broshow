@@ -17,7 +17,7 @@
 //      saved filename → window can be closed.
 // ---------------------------------------------------------------------------
 
-import { createRecordingSession } from './mp4';
+import { createMediaRecorderSession } from './mp4';
 import { formatRecordingFilename } from './background-logic';
 
 type State = 'idle' | 'recording' | 'processing' | 'done';
@@ -26,7 +26,7 @@ const button = document.getElementById('action-button') as HTMLButtonElement;
 const status = document.getElementById('status') as HTMLParagraphElement;
 
 let stream: MediaStream | null = null;
-let session: ReturnType<typeof createRecordingSession> | null = null;
+let session: ReturnType<typeof createMediaRecorderSession> | null = null;
 let state: State = 'idle';
 
 // renderButton ONLY updates the button. Status text is owned by the event
@@ -57,15 +57,64 @@ const renderButton = (): void => {
 const startRecording = async (): Promise<void> => {
   console.log('[record] startRecording: invoking getDisplayMedia');
   try {
-    stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    const captureAudioCheckbox = document.getElementById('capture-audio') as HTMLInputElement | null;
+    const wantAudio = captureAudioCheckbox?.checked === true;
+
+    // displaySurface: 'browser' biases Firefox's picker toward tabs (the only
+    // surface that ever exposes "Share audio" on Firefox+macOS — even then the
+    // checkbox often isn't shown, hence the BlackHole route in record.html).
+    let displayStream: MediaStream;
+    try {
+      displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { displaySurface: 'browser' },
+        audio: true,
+      });
+    } catch (browserSurfaceError) {
+      const e = browserSurfaceError as Error;
+      console.log('[record] browser-surface request failed, falling back:', e?.name, '|', e?.message);
+      displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    }
     console.log(
-      '[record] startRecording: stream acquired',
-      stream.getVideoTracks().length, 'video,',
-      stream.getAudioTracks().length, 'audio',
+      '[record] getDisplayMedia: video=', displayStream.getVideoTracks().length,
+      'audio=', displayStream.getAudioTracks().length,
+      'displaySurface=', displayStream.getVideoTracks()[0]?.getSettings?.()?.displaySurface,
     );
-    session = createRecordingSession(stream);
+
+    // If the user opted in to mic/BlackHole audio AND the display didn't
+    // already include audio, attach the system audio input as a track.
+    let audioSource: 'display' | 'audio-input' | 'none' = 'none';
+    if (displayStream.getAudioTracks().length > 0) {
+      stream = displayStream;
+      audioSource = 'display';
+    } else if (wantAudio) {
+      try {
+        const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        const tracks = [
+          ...displayStream.getVideoTracks(),
+          ...audioStream.getAudioTracks(),
+        ];
+        stream = new MediaStream(tracks);
+        audioSource = 'audio-input';
+        console.log('[record] combined display video + audio input device');
+      } catch (micErr) {
+        const e = micErr as Error;
+        console.log('[record] audio-input declined or failed:', e?.name, '|', e?.message);
+        stream = displayStream;
+        audioSource = 'none';
+      }
+    } else {
+      stream = displayStream;
+      audioSource = 'none';
+    }
+
+    if (captureAudioCheckbox) captureAudioCheckbox.disabled = true;
+
+    session = createMediaRecorderSession(stream);
     state = 'recording';
-    status.textContent = 'Recording...';
+    status.textContent =
+      audioSource === 'display' ? 'Recording (with shared audio)...'
+      : audioSource === 'audio-input' ? 'Recording (with audio input)...'
+      : 'Recording (video only)...';
     renderButton();
 
     // If the user stops sharing via Firefox's native control, treat it as a
@@ -122,6 +171,8 @@ const stopRecording = async (): Promise<void> => {
     state = 'idle';
   } finally {
     currentStream.getTracks().forEach((t) => t.stop());
+    const captureAudioCheckbox = document.getElementById('capture-audio') as HTMLInputElement | null;
+    if (captureAudioCheckbox) captureAudioCheckbox.disabled = false;
     renderButton();
   }
 };

@@ -159,13 +159,37 @@ const createWebCodecsPipeline = (stream: MediaStream): WebCodecsHandle => {
 /** Timeout (ms) for MediaRecorder.stop() to fire onstop event. */
 const MEDIA_RECORDER_STOP_TIMEOUT_MS = 10_000;
 
-const createMediaRecorderSession = (stream: MediaStream): RecorderSession => {
-  const mimeTypes = [
-    'video/webm;codecs=vp9,opus',
-    'video/webm;codecs=vp8,opus',
-    'video/webm',
-  ];
+/**
+ * WebM-only recorder session. Used by the Firefox record-tab path where
+ * WebCodecs / MediaStreamTrackProcessor would consume the stream's video
+ * frames exclusively, starving MediaRecorder of input. Output is WebM;
+ * the Chromium offscreen path uses createRecordingSession instead, which
+ * runs both pipelines on a context that supports parallel consumers.
+ */
+export const createMediaRecorderSession = (stream: MediaStream): RecorderSession => {
+  // Firefox: MediaRecorder constructed with an audio-codec-bearing mime type
+  // (e.g., vp9,opus) silently produces zero chunks if the stream has no
+  // audio track, even though isTypeSupported returns true. Choose the
+  // candidate list based on what's actually in the stream.
+  const hasAudio = stream.getAudioTracks().length > 0;
+  const mimeTypes = hasAudio
+    ? [
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm',
+      ]
+    : [
+        'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
+        'video/webm',
+      ];
   const mimeType = mimeTypes.find((t) => MediaRecorder.isTypeSupported(t)) ?? '';
+  console.log(
+    '[mp4] createMediaRecorderSession:',
+    'video tracks=', stream.getVideoTracks().length,
+    'audio tracks=', stream.getAudioTracks().length,
+    'mimeType=', mimeType || '(default)',
+  );
   const chunks: Blob[] = [];
 
   const recorder = new MediaRecorder(stream, {
@@ -173,12 +197,17 @@ const createMediaRecorderSession = (stream: MediaStream): RecorderSession => {
   });
 
   recorder.ondataavailable = (event: BlobEvent) => {
+    console.log('[mp4] dataavailable: size=', event.data.size, 'state=', recorder.state);
     if (event.data.size > 0) {
       chunks.push(event.data);
     }
   };
 
+  recorder.onstart = () => console.log('[mp4] recorder.onstart fired, state=', recorder.state);
+  recorder.onerror = (event) => console.log('[mp4] recorder.onerror', event);
+
   recorder.start(1000);
+  console.log('[mp4] recorder.start(1000) called, state=', recorder.state);
 
   return {
     stop: () =>
@@ -191,9 +220,9 @@ const createMediaRecorderSession = (stream: MediaStream): RecorderSession => {
 
         recorder.onstop = () => {
           clearTimeout(timeoutId);
-          // Use simple MIME type without codec params — commas in
-          // "codecs=vp8,opus" break data URL parsing downstream.
           const simpleMime = (mimeType || 'video/webm').split(';')[0];
+          const totalSize = chunks.reduce((sum, c) => sum + c.size, 0);
+          console.log('[mp4] recorder.onstop fired: chunks=', chunks.length, 'totalBytes=', totalSize);
           resolve(new Blob(chunks, { type: simpleMime }));
         };
         recorder.onerror = (event) => {
