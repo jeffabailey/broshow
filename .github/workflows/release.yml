@@ -65,14 +65,45 @@ jobs:
       - name: Lint Firefox build
         run: npx web-ext lint --source-dir firefox-dist --warnings-as-errors=false
 
+      - name: Resolve next available AMO version (auto-bumps if tag version is taken)
+        id: amo-version
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+          TAG_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ -z "$AMO_JWT_ISSUER" ] || [ -z "$AMO_JWT_SECRET" ]; then
+            echo "amo_version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+            echo "AMO credentials missing; using tag version verbatim ($TAG_VERSION)"
+            exit 0
+          fi
+          RESOLVED=$(node scripts/find-next-amo-version.mjs "$TAG_VERSION")
+          echo "amo_version=$RESOLVED" >> "$GITHUB_OUTPUT"
+          if [ "$RESOLVED" != "$TAG_VERSION" ]; then
+            echo "::warning::Tag version $TAG_VERSION is already on AMO. Auto-bumped Firefox xpi to $RESOLVED."
+          else
+            echo "Tag version $TAG_VERSION is available on AMO."
+          fi
+
+      - name: Bump Firefox manifest version to resolved AMO version
+        if: steps.amo-version.outputs.amo_version != steps.version.outputs.version
+        run: |
+          node -e "
+            const fs = require('fs');
+            const path = 'firefox-dist/manifest.json';
+            const m = JSON.parse(fs.readFileSync(path, 'utf8'));
+            m.version = '${{ steps.amo-version.outputs.amo_version }}';
+            fs.writeFileSync(path, JSON.stringify(m, null, 2) + '\n');
+          "
+
       - name: Package Firefox xpi (signed via AMO if credentials are set, else unsigned)
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
-          XPI_OUTPUT: broshow-firefox-${{ steps.version.outputs.version }}.xpi
+          XPI_OUTPUT: broshow-firefox-${{ steps.amo-version.outputs.amo_version }}.xpi
         run: |
           if [ -n "$AMO_JWT_ISSUER" ] && [ -n "$AMO_JWT_SECRET" ]; then
-            echo "Signing xpi via AMO (unlisted channel)..."
+            echo "Signing xpi via AMO (unlisted channel) as version ${{ steps.amo-version.outputs.amo_version }}..."
             mkdir -p signed
             npx web-ext sign \
               --source-dir firefox-dist \
@@ -97,4 +128,4 @@ jobs:
           generate_release_notes: true
           files: |
             broshow-chrome-${{ steps.version.outputs.version }}.zip
-            broshow-firefox-${{ steps.version.outputs.version }}.xpi
+            broshow-firefox-${{ steps.amo-version.outputs.amo_version }}.xpi
