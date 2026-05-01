@@ -8,3 +8,5 @@ tests/downloads/
 tests/downloads-*/
 .firefox-dev/
 docs/feature/*/deliver/.develop-progress.json
+reports/mutation/
+.stryker-tmp/

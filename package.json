@@ -14,10 +14,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:acceptance": "playwright test",
+    "test:mutation": "stryker run",
     "start": "npm run build && web-ext run --target chromium --source-dir dist/"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/vitest-runner": "^9.6.1",
     "esbuild": "^0.24.0",
     "playwright": "^1.49.0",
     "typescript": "^5.7.0",
