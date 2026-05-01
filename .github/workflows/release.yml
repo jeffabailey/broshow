@@ -9,9 +9,23 @@ on:
       tag:
         description: 'Tag to release (e.g., v0.1.0). Must already exist or will be created on the current commit.'
         required: true
+      targets:
+        description: 'Marketplace targets (comma-separated): cws,amo-listed | cws-only | amo-listed-only | none'
+        required: false
+        default: 'cws,amo-listed'
+      mode:
+        description: 'Publish mode: publish | upload-only | dry-run'
+        required: false
+        default: 'publish'
 
 permissions:
   contents: write
+
+# Prevent two parallel publish runs for the same tag from racing on the
+# same marketplace listing.
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -129,3 +143,138 @@ jobs:
           files: |
             broshow-chrome-${{ steps.version.outputs.version }}.zip
             broshow-firefox-${{ steps.amo-version.outputs.amo_version }}.xpi
+
+      - name: Upload publish artifacts
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-artifacts
+          path: |
+            broshow-chrome-${{ steps.version.outputs.version }}.zip
+            broshow-firefox-${{ steps.amo-version.outputs.amo_version }}.xpi
+          retention-days: 7
+
+  # Marketplace publish job. Environment-gated by `marketplace-prod` so that
+  # publishing requires an explicit reviewer approval click distinct from the
+  # tag push. Honors the project memory rule: tag push alone never publishes;
+  # only an explicit workflow_dispatch with reviewer approval does.
+  publish:
+    needs: release
+    if: github.event_name == 'workflow_dispatch' && inputs.mode != 'dry-run' && inputs.targets != 'none'
+    runs-on: ubuntu-latest
+    environment: marketplace-prod
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [cws, amo-listed]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Skip if target not in inputs.targets
+        id: filter
+        run: |
+          TARGETS="${{ inputs.targets }}"
+          TARGET="${{ matrix.target }}"
+          case "$TARGETS" in
+            *"$TARGET"*) echo "run=true" >> "$GITHUB_OUTPUT" ;;
+            "cws-only") [ "$TARGET" = "cws" ] && echo "run=true" >> "$GITHUB_OUTPUT" || echo "run=false" >> "$GITHUB_OUTPUT" ;;
+            "amo-listed-only") [ "$TARGET" = "amo-listed" ] && echo "run=true" >> "$GITHUB_OUTPUT" || echo "run=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "run=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Download publish artifacts
+        if: steps.filter.outputs.run == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: publish-artifacts
+          path: ./publish-artifacts
+
+      - name: Run publish orchestrator (${{ matrix.target }})
+        if: steps.filter.outputs.run == 'true'
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+          CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          TAG: ${{ inputs.tag }}
+          TARGETS: ${{ matrix.target }}
+          MODE: ${{ inputs.mode }}
+          ARTIFACT_DIR: ./publish-artifacts
+        run: node scripts/publish-orchestrator.effect.mjs
+
+  # Dry-run is a read-only verification path. Skips the environment gate
+  # because no external state is mutated -- only API probes for token
+  # validity, version-conflict detection, and quota checks.
+  publish-dry-run:
+    needs: release
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'dry-run' && inputs.targets != 'none'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [cws, amo-listed]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run dry-run orchestrator (${{ matrix.target }})
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+          CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          TAG: ${{ inputs.tag }}
+          TARGETS: ${{ matrix.target }}
+          MODE: dry-run
+        run: node scripts/publish-orchestrator.effect.mjs
+
+  # End-of-run aggregation. Runs even on partial failure so that maintainer
+  # always sees a per-target outcome table in the GitHub Actions step summary.
+  aggregate-summary:
+    needs: [release, publish, publish-dry-run]
+    if: always() && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Render aggregate summary
+        run: |
+          {
+            echo "# Marketplace Publish Summary"
+            echo ""
+            echo "| Target | Status |"
+            echo "|--------|--------|"
+            echo "| chrome-web-store | ${{ needs.publish.result }}${{ needs.publish-dry-run.result }} |"
+            echo "| amo-listed | ${{ needs.publish.result }}${{ needs.publish-dry-run.result }} |"
+            echo ""
+            echo "Mode: ${{ inputs.mode }}"
+            echo "Tag: ${{ inputs.tag }}"
+            echo "Targets: ${{ inputs.targets }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if any publish target failed
+        if: needs.publish.result == 'failure' || needs.publish-dry-run.result == 'failure'
+        run: |
+          echo "::error::At least one marketplace publish target failed. See per-job logs."
+          exit 1
