@@ -1,0 +1,242 @@
+# Test Environment Matrix: Marketplace Publishing (DEVOPS)
+#
+# Feature ID: marketplace-publishing
+# Wave: DEVOPS
+# Date: 2026-04-30
+#
+# Purpose: defines the controlled environments DISTILL's acceptance test
+# harness uses to exercise each AC. Each environment is a named bundle of
+# preconditions (which mocks/fixtures are active) that the test runner
+# applies before executing one or more scenarios.
+#
+# Per nw-distill skill default, the matrix is `[clean, with-pre-commit,
+# with-stale-config]`. Adapted to this feature's failure-mode spectrum, the
+# matrix below covers the Result<T, E> classification branches the design's
+# `decisions.pure.mjs::classifyVersionState` and adapters' error
+# classifiers must distinguish.
+#
+# DISTILL consumes this file to bind each acceptance scenario to exactly
+# one environment. The design's data-models.md driving-port mapping plus
+# this matrix together form the test-design contract.
+#
+# Test runner expectation: each entry's `simulate` block is a recipe a
+# test-setup helper applies (typically via vi.stubGlobal('fetch', ...)
+# or vi.spyOn(child_process, 'spawn', ...)). The test asserts the
+# orchestrator's emitted PublishOutcome matches `expected_classification`.
+
+version: 1
+feature: marketplace-publishing
+default_env: clean
+
+environments:
+
+  - name: clean
+    description: |
+      Happy path. All credentials valid; no prior version on either store;
+      both APIs respond 200 OK. Used by the "first publish ever" scenarios
+      and as the negative-control baseline for the failure-mode envs.
+    preconditions:
+      - cws_credentials: valid
+      - cws_existing_versions: []
+      - cws_item_state: OK
+      - amo_credentials: valid
+      - amo_existing_listed_versions: []
+      - amo_existing_unlisted_versions: []
+    simulate:
+      cws_oauth_token_endpoint: |
+        vi.stubGlobal('fetch', mockFetch({
+          'https://oauth2.googleapis.com/token': () => ({
+            ok: true, status: 200,
+            json: async () => ({ access_token: 'fake-cws-access', expires_in: 3600 })
+          })
+        }))
+      cws_item_probe: |
+        '/chromewebstore/v1.1/items/{id}': () => ({
+          ok: true, status: 200,
+          json: async () => ({ uploadState: 'SUCCESS', itemError: [] })
+        })
+      cws_upload: |
+        '/upload/chromewebstore/v1.1/items/{id}': () => ({
+          ok: true, status: 200,
+          json: async () => ({ uploadState: 'SUCCESS' })
+        })
+      cws_publish: |
+        '/chromewebstore/v1.1/items/{id}/publish': () => ({
+          ok: true, status: 200,
+          json: async () => ({ status: ['OK'] })
+        })
+      amo_versions_probe: |
+        '/api/v5/addons/addon/{guid}/versions/?filter=all_with_unlisted': () => ({
+          ok: true, status: 200,
+          json: async () => ({ count: 0, results: [] })
+        })
+      amo_web_ext_sign: |
+        vi.spyOn(child_process, 'spawn').mockReturnValue(
+          mockSpawn({ stdout: 'Signed and submitted as 0.3.0\n', code: 0 })
+        )
+    applicable_acs:
+      - AC-1-1   # bootstrap mints refresh token (separate test, but env is clean)
+      - AC-2-2   # AMO listed first publish succeeds
+      - AC-3-3   # full publish to both stores succeeds
+      - AC-3-7   # both stores green
+      - AC-5-2   # dry-run on clean env reports "would publish"
+    expected_classification:
+      cws: success
+      amo_listed: success
+    notes: |
+      This is the only env where every target's expected outcome is
+      `success`. All other envs target one specific failure-mode branch.
+
+  - name: with-amo-throttle-active
+    description: |
+      AMO API returns 429 Too Many Requests with Retry-After header on the
+      versions probe. Exercises the rate_limited classification branch in
+      amo-listed-adapter.effect.mjs. This is a recoverable failure: the
+      maintainer re-dispatches the workflow tomorrow.
+    preconditions:
+      - amo_api_state: throttled
+      - amo_credentials: valid
+    simulate:
+      amo_versions_probe: |
+        '/api/v5/addons/addon/{guid}/versions/?filter=all_with_unlisted': () => ({
+          ok: false, status: 429,
+          headers: new Headers({ 'Retry-After': '3600' }),
+          json: async () => ({ detail: 'Request was throttled. Expected available in 3600 seconds.' })
+        })
+    applicable_acs:
+      - AC-3-6   # adapter classifies 429 as rate_limited
+      - AC-3-10  # step summary shows rate_limited classification
+      - AC-4-1   # recovery hint emitted with `targets: amo-listed-only`
+    expected_classification:
+      amo_listed: failure
+      amo_listed_subcode: rate_limited
+      retryable: true
+    expected_summary_excerpt: |
+      | amo-listed | 0.3.0 | failure | HTTP 429: rate limited (Retry-After: 3600s) | https://addons.mozilla.org/.../broshow |
+    expected_recovery_hint: |
+      Re-dispatch this workflow tomorrow with:
+        targets: amo-listed-only
+        mode: publish
+    notes: |
+      AMO documents 60 requests/min as the listed-API rate limit. Real
+      throttling is rare on a single-maintainer cadence (releases << 1/min)
+      but the adapter MUST classify it correctly because (a) burst
+      retries during workflow iteration could trip it, (b) AMO has
+      sometimes lowered limits without notice.
+
+  - name: with-cws-rate-limit-active
+    description: |
+      CWS upload endpoint returns 429. Different from AMO throttle because
+      CWS does not surface Retry-After consistently and quotas are per-
+      project not per-extension. Exercises the rate_limited branch in
+      cws-adapter.effect.mjs.
+    preconditions:
+      - cws_api_state: quota_exceeded_on_upload
+      - cws_credentials: valid
+      - cws_oauth: valid
+    simulate:
+      cws_oauth_token_endpoint: |
+        '/token': () => ({
+          ok: true, status: 200,
+          json: async () => ({ access_token: 'fake-cws-access', expires_in: 3600 })
+        })
+      cws_item_probe: |
+        '/chromewebstore/v1.1/items/{id}': () => ({
+          ok: true, status: 200,
+          json: async () => ({ uploadState: 'SUCCESS', itemError: [] })
+        })
+      cws_upload: |
+        '/upload/chromewebstore/v1.1/items/{id}': () => ({
+          ok: false, status: 429,
+          json: async () => ({
+            error: {
+              code: 429,
+              message: 'Quota exceeded for quota metric \'Upload requests\' and limit \'Upload requests per minute per project\''
+            }
+          })
+        })
+    applicable_acs:
+      - AC-3-6   # CWS adapter classifies 429 as rate_limited
+      - AC-3-10  # step summary shows rate_limited classification
+      - AC-4-1   # recovery hint emitted with `targets: cws-only`
+    expected_classification:
+      cws: failure
+      cws_subcode: rate_limited
+      retryable: true
+    expected_summary_excerpt: |
+      | cws | 0.3.0 | failure | HTTP 429: quota exceeded on upload | https://chrome.google.com/webstore/devconsole/.../abc... |
+    expected_recovery_hint: |
+      Re-dispatch this workflow tomorrow with:
+        targets: cws-only
+        mode: publish
+    notes: |
+      CWS quota errors usually clear in <1 hour but the conservative
+      recovery message is "tomorrow" because we cannot reliably parse a
+      Retry-After equivalent from CWS error responses.
+
+  - name: with-stale-cws-token-near-expiry
+    description: |
+      Refresh token returns invalid_grant from oauth2.googleapis.com,
+      typically because the token has been revoked (user revoked OAuth
+      grant in Google Account, or it has been unused for 6 months).
+      Exercises the auth_expired classification branch and informs the
+      maintainer they must re-run cws-bootstrap.mjs.
+    preconditions:
+      - cws_refresh_token_state: revoked
+      - cws_credentials: client_id_and_secret_valid_but_refresh_dead
+    simulate:
+      cws_oauth_token_endpoint: |
+        '/token': () => ({
+          ok: false, status: 400,
+          json: async () => ({
+            error: 'invalid_grant',
+            error_description: 'Token has been expired or revoked.'
+          })
+        })
+    applicable_acs:
+      - AC-3-6   # adapter classifies invalid_grant as auth_expired
+      - AC-3-10  # step summary shows auth_expired classification
+      - AC-4-1   # recovery hint mentions cws-bootstrap.mjs re-run
+    expected_classification:
+      cws: failure
+      cws_subcode: auth_expired
+      retryable: false  # not retryable without manual intervention
+    expected_summary_excerpt: |
+      | cws | 0.3.0 | failure | OAuth refresh failed: invalid_grant (token revoked or expired) | https://chrome.google.com/webstore/devconsole/.../abc... |
+    expected_recovery_hint: |
+      Re-mint the CWS refresh token by running locally:
+        node scripts/cws-bootstrap.mjs
+      Then update the CWS_REFRESH_TOKEN secret in the marketplace-prod environment.
+      After updating, re-dispatch with: targets: cws-only, mode: publish
+    notes: |
+      This is the most operationally important env because invalid_grant
+      is the most likely real-world failure mode (refresh tokens silently
+      die after 6 months of inactivity per Google policy). The adapter
+      MUST distinguish invalid_grant (auth_expired, manual fix) from
+      generic 4xx (unknown, escalate).
+
+# Additional envs deferred to future iterations (not blocking v1):
+#
+#   - with-amo-version-conflict
+#       Exercises classifyVersionState returning `already-published` when
+#       the requested version is already on AMO listed. AC-2-1 (fail-hard
+#       on listed conflict per Q4). Currently covered by inline unit tests
+#       on decisions.pure.mjs; promoting to acceptance-env if DISTILL needs.
+#
+#   - with-cws-version-conflict
+#       Same idea for CWS. Probe returns existing draft with same version.
+#
+#   - with-cws-payload-too-large
+#       Upload exceeds 10MB CWS limit. Currently improbable for BroShow
+#       (~50KB extension) but is a defensive classification branch.
+#
+# DISTILL may add these if scope allows. DEVOPS does not require them.
+
+# Driving port -> env binding (informational; DISTILL re-confirms in test code)
+#
+# Each acceptance test pins itself to one env via a setup hook:
+#
+#   beforeEach(() => loadEnv('with-amo-throttle-active'))
+#
+# The test then exercises the orchestrator's main() driving port and
+# asserts on the emitted PublishOutcome and step summary content.
