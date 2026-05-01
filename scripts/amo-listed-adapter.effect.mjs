@@ -12,6 +12,7 @@
 // fakes; defaults are globalThis.fetch and node:child_process.spawn.
 
 import { generateJwt } from './amo-jwt.pure.mjs';
+import { classifyHttpStatus } from './decisions.pure.mjs';
 
 const AMO_API_BASE = 'https://addons.mozilla.org/api/v5';
 const WEB_EXT_BIN = 'web-ext';
@@ -41,14 +42,6 @@ const safeJson = async (response) => {
   } catch {
     return {};
   }
-};
-
-const classifyHttp = (status) => {
-  if (status === 401 || status === 403) return 'auth_expired';
-  if (status === 429) return 'rate_limited';
-  if (status === 413) return 'payload_too_large';
-  if (status >= 500 && status <= 599) return 'upstream_api_down';
-  return 'unknown_http';
 };
 
 const httpErrorMessage = (status, body) => {
@@ -97,7 +90,7 @@ export async function probeAmoListedVersions(creds, addonGuid, deps) {
 
   return {
     ok: false,
-    error: { code: classifyHttp(response.status), message: httpErrorMessage(response.status, json) },
+    error: { code: classifyHttpStatus(response.status), message: httpErrorMessage(response.status, json) },
   };
 }
 

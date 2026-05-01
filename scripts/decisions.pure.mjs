@@ -241,6 +241,26 @@ export function renderSummary(aggregateResult) {
 }
 
 // ---------------------------------------------------------------------------
+// HTTP classification (shared by adapters)
+// ---------------------------------------------------------------------------
+
+/**
+ * Classifies an HTTP status code into a known marketplace error code.
+ * Pure: status-only mapping. Adapter-specific body inspection (e.g.,
+ * CWS body.error === 'invalid_grant') happens in the adapter on top of this.
+ *
+ * @param {number} status
+ * @returns {'auth_expired'|'rate_limited'|'payload_too_large'|'upstream_api_down'|'unknown_http'}
+ */
+export function classifyHttpStatus(status) {
+  if (status === 401 || status === 403) return 'auth_expired';
+  if (status === 429) return 'rate_limited';
+  if (status === 413) return 'payload_too_large';
+  if (status >= 500 && status <= 599) return 'upstream_api_down';
+  return 'unknown_http';
+}
+
+// ---------------------------------------------------------------------------
 // Sanitization
 // ---------------------------------------------------------------------------
 

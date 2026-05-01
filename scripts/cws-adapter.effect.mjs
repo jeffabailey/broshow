@@ -12,6 +12,8 @@
 
 import { promises as fsp } from 'node:fs';
 
+import { classifyHttpStatus } from './decisions.pure.mjs';
+
 const OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const CWS_BASE = 'https://www.googleapis.com/chromewebstore/v1.1';
 const CWS_UPLOAD_BASE = 'https://www.googleapis.com/upload/chromewebstore/v1.1';
@@ -38,14 +40,10 @@ const safeJson = async (response) => {
 };
 
 const classifyHttp = (status, body) => {
-  if (status === 401 || status === 403) return 'auth_expired';
-  if (status === 429) return 'rate_limited';
-  if (status === 413) return 'payload_too_large';
   if (status === 404) return 'item_not_found';
-  if (status >= 500 && status <= 599) return 'upstream_api_down';
   if (body && typeof body.error === 'object' && body.error.code === 429) return 'rate_limited';
   if (body && body.error === 'invalid_grant') return 'auth_expired';
-  return 'unknown_http';
+  return classifyHttpStatus(status);
 };
 
 const errorMessage = (status, body) => {
