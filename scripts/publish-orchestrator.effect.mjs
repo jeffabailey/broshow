@@ -370,6 +370,23 @@ const dispatchStep = async (step, version, env, deps, now) => {
 // ---------------------------------------------------------------------------
 
 /**
+ * Builds an early-failure result envelope and writes the summary.
+ * Used for parse-input and manifest-read failures, before any adapter step runs.
+ */
+const earlyFailure = async (deps, env, errorOutcome) => {
+  const result = aggregateOutcomes([errorOutcome]);
+  const summaryMarkdown = renderSummary(result);
+  await safeWriteSummary(deps, summaryMarkdown, env.SUMMARY_PATH);
+  return {
+    exitCode: 1,
+    outcomes: result.outcomes,
+    summaryMarkdown,
+    recoveryHint: result.recoveryHint,
+    memoryRulePreserved: result.memoryRulePreserved,
+  };
+};
+
+/**
  * @param {Record<string,string>} env
  * @param {Object} [deps]
  * @returns {Promise<{exitCode: 0|1, outcomes: ReadonlyArray<Object>, summaryMarkdown: string, recoveryHint: string|null, memoryRulePreserved: boolean}>}
@@ -387,23 +404,13 @@ export async function runPublish(env, deps) {
     mode = parseMode({ mode: env.MODE, cwsPublish: env.CWS_PUBLISH });
   } catch (err) {
     logError('runPublish: input parse error:', err.message);
-    const errorOutcome = buildOutcome({
+    return earlyFailure(deps, env, buildOutcome({
       target: 'cws',
       version: '',
       status: 'failure',
       message: `Configuration error: ${err.message}`,
       errorCode: 'config_invalid',
-    });
-    const result = aggregateOutcomes([errorOutcome]);
-    const summaryMarkdown = renderSummary(result);
-    await safeWriteSummary(deps, summaryMarkdown, env.SUMMARY_PATH);
-    return {
-      exitCode: 1,
-      outcomes: result.outcomes,
-      summaryMarkdown,
-      recoveryHint: result.recoveryHint,
-      memoryRulePreserved: result.memoryRulePreserved,
-    };
+    }));
   }
 
   if (targets.length === 0) {
@@ -427,23 +434,13 @@ export async function runPublish(env, deps) {
     }
   } catch (err) {
     logError('runPublish: manifest read error:', err.message);
-    const errorOutcome = buildOutcome({
+    return earlyFailure(deps, env, buildOutcome({
       target: targets[0],
       version: '',
       status: 'failure',
       message: `Manifest read failed: ${err.message}`,
       errorCode: 'manifest_invalid',
-    });
-    const result = aggregateOutcomes([errorOutcome]);
-    const summaryMarkdown = renderSummary(result);
-    await safeWriteSummary(deps, summaryMarkdown, env.SUMMARY_PATH);
-    return {
-      exitCode: 1,
-      outcomes: result.outcomes,
-      summaryMarkdown,
-      recoveryHint: result.recoveryHint,
-      memoryRulePreserved: result.memoryRulePreserved,
-    };
+    }));
   }
 
   // Step 4: plan execution (pure).
