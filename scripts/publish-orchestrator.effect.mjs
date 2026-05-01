@@ -77,13 +77,13 @@ const amoCredsFromEnv = (env) => ({
 });
 
 const isMissingCwsCreds = (env) => {
-  const c = cwsCredsFromEnv(env);
-  return !c.clientId || !c.clientSecret || !c.refreshToken || !c.extensionId;
+  const creds = cwsCredsFromEnv(env);
+  return !creds.clientId || !creds.clientSecret || !creds.refreshToken || !creds.extensionId;
 };
 
 const isMissingAmoCreds = (env) => {
-  const c = amoCredsFromEnv(env);
-  return !c.issuer || !c.secret;
+  const creds = amoCredsFromEnv(env);
+  return !creds.issuer || !creds.secret;
 };
 
 const dryRunMessage = (action) => `${DRY_RUN_PREFIX} ${action}`;
@@ -453,15 +453,16 @@ export async function runPublish(env, deps) {
   const settled = await Promise.allSettled(
     steps.map((step) => dispatchStep(step, version, env, deps, now))
   );
-  const outcomes = settled.map((r, idx) => {
-    if (r.status === 'fulfilled') return r.value;
+  const outcomes = settled.map((settlement, idx) => {
+    if (settlement.status === 'fulfilled') return settlement.value;
     const step = steps[idx];
-    logError(`runPublish: step for ${step.target} threw:`, r.reason?.message ?? String(r.reason));
+    const reasonMessage = settlement.reason?.message ?? String(settlement.reason);
+    logError(`runPublish: step for ${step.target} threw:`, reasonMessage);
     return buildOutcome({
       target: step.target,
       version,
       status: step.mode === 'dry-run' ? 'would-fail' : 'failure',
-      message: `Unexpected error: ${r.reason?.message ?? String(r.reason)}`,
+      message: `Unexpected error: ${reasonMessage}`,
       errorCode: 'unknown_http',
     });
   });

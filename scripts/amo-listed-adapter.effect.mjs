@@ -89,9 +89,9 @@ export async function probeAmoListedVersions(creds, addonGuid, deps) {
   if (response.status === 200) {
     const results = Array.isArray(json.results) ? json.results : [];
     const listed = results
-      .filter((v) => v && typeof v.version === 'string')
-      .filter((v) => v.channel === undefined || v.channel === 'listed')
-      .map((v) => v.version);
+      .filter((versionEntry) => versionEntry && typeof versionEntry.version === 'string')
+      .filter((versionEntry) => versionEntry.channel === undefined || versionEntry.channel === 'listed')
+      .map((versionEntry) => versionEntry.version);
     return { ok: true, value: new Set(listed) };
   }
 

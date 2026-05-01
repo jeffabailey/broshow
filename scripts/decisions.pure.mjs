@@ -140,9 +140,9 @@ export function planRun(targets, mode) {
 // Aggregation
 // ---------------------------------------------------------------------------
 
-const isFailureStatus = (s) => s === 'failure' || s === 'would-fail';
-const isAlreadyPublishedStatus = (s) => s === 'already-published';
-const isDryRunStatus = (s) => s === 'would-succeed' || s === 'would-fail';
+const isFailureStatus = (status) => status === 'failure' || status === 'would-fail';
+const isAlreadyPublishedStatus = (status) => status === 'already-published';
+const isDryRunStatus = (status) => status === 'would-succeed' || status === 'would-fail';
 
 /**
  * @param {readonly Object[]} outcomes

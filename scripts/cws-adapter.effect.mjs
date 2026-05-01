@@ -150,10 +150,10 @@ export async function uploadCwsItem(creds, accessToken, zipPath, deps) {
   }
   if (response.status === 200 && json.uploadState && json.uploadState !== 'SUCCESS') {
     const itemErrors = Array.isArray(json.itemError) ? json.itemError : [];
-    const code = itemErrors.find((e) => e && e.error_code === 'VERSION_ALREADY_EXISTS')
+    const code = itemErrors.find((itemError) => itemError && itemError.error_code === 'VERSION_ALREADY_EXISTS')
       ? 'version_conflict'
       : 'unknown_http';
-    const detail = itemErrors.map((e) => e.error_detail || e.error_code).filter(Boolean).join('; ')
+    const detail = itemErrors.map((itemError) => itemError.error_detail || itemError.error_code).filter(Boolean).join('; ')
       || `uploadState=${json.uploadState}`;
     return { ok: false, error: { code, message: detail } };
   }
