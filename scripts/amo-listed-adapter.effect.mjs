@@ -13,6 +13,7 @@
 
 import { generateJwt } from './amo-jwt.pure.mjs';
 import { classifyHttpStatus } from './decisions.pure.mjs';
+import { resolveFetch as resolveFetchShared, safeJson } from './http-helpers.effect.mjs';
 
 const AMO_API_BASE = 'https://addons.mozilla.org/api/v5';
 const WEB_EXT_BIN = 'web-ext';
@@ -21,27 +22,12 @@ const WEB_EXT_BIN = 'web-ext';
 // Helpers
 // ---------------------------------------------------------------------------
 
-const resolveFetch = (deps) => {
-  const fn = (deps && deps.fetch) || globalThis.fetch;
-  if (typeof fn !== 'function') {
-    throw new Error('amo-listed-adapter: no fetch available (pass deps.fetch or run on Node 18+)');
-  }
-  return fn;
-};
+const resolveFetch = (deps) => resolveFetchShared(deps, 'amo-listed-adapter');
 
 const resolveSpawn = async (deps) => {
   if (deps && typeof deps.spawn === 'function') return deps.spawn;
   const cp = await import('node:child_process');
   return cp.spawn;
-};
-
-const safeJson = async (response) => {
-  try {
-    const text = await response.text();
-    return text ? JSON.parse(text) : {};
-  } catch {
-    return {};
-  }
 };
 
 const httpErrorMessage = (status, body) => {

@@ -13,6 +13,7 @@
 import { promises as fsp } from 'node:fs';
 
 import { classifyHttpStatus } from './decisions.pure.mjs';
+import { resolveFetch as resolveFetchShared, safeJson } from './http-helpers.effect.mjs';
 
 const OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const CWS_BASE = 'https://www.googleapis.com/chromewebstore/v1.1';
@@ -22,22 +23,7 @@ const CWS_UPLOAD_BASE = 'https://www.googleapis.com/upload/chromewebstore/v1.1';
 // Helpers
 // ---------------------------------------------------------------------------
 
-const resolveFetch = (deps) => {
-  const fn = (deps && deps.fetch) || globalThis.fetch;
-  if (typeof fn !== 'function') {
-    throw new Error('cws-adapter: no fetch available (pass deps.fetch or run on Node 18+)');
-  }
-  return fn;
-};
-
-const safeJson = async (response) => {
-  try {
-    const text = await response.text();
-    return text ? JSON.parse(text) : {};
-  } catch {
-    return {};
-  }
-};
+const resolveFetch = (deps) => resolveFetchShared(deps, 'cws-adapter');
 
 const classifyHttp = (status, body) => {
   if (status === 404) return 'item_not_found';
