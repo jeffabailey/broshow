@@ -107,7 +107,7 @@ Not blocking publish per your current error list, but you'll want to fill this i
 |---|---|
 | Title | `BroShow` |
 | Summary (≤132 chars) | `Record a browser tab and save it as an MP4 file. No accounts, no servers, no telemetry — everything runs locally in your browser.` |
-| Description | Reuse the README's "What it does" section + "Privacy" section. Mention: tab-only capture, optional audio, MP4 output, Manifest V3, no telemetry, no remote code, no network. |
+| Description | Paste the **What it does**, **Usage**, **Privacy**, and **Permissions** sections from `README.md` (https://github.com/jeffabailey/broshow/blob/main/README.md). Or write your own — must mention: tab-only capture, optional audio, MP4 output, Manifest V3, no telemetry, no remote code, no network. |
 | Category | **Productivity** (best fit) or **Developer Tools** |
 | Language | English (US) |
 | Screenshots | Need at least 1 (1280x800 or 640x400 PNG). Capture: popup with "Start Recording" button, recording in-progress with REC badge visible on toolbar, finished MP4 in Downloads. |
