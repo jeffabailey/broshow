@@ -34,5 +34,6 @@ cpSync(resolve(srcDir, 'popup.html'), resolve(distDir, 'popup.html'), copyOpts);
 cpSync(resolve(srcDir, 'popup.css'), resolve(distDir, 'popup.css'), copyOpts);
 cpSync(resolve(srcDir, 'offscreen.html'), resolve(distDir, 'offscreen.html'), copyOpts);
 cpSync(resolve(srcDir, 'record.html'), resolve(distDir, 'record.html'), copyOpts);
+cpSync(resolve(srcDir, 'icons'), resolve(distDir, 'icons'), { ...copyOpts, recursive: true });
 
 console.log('Build complete: dist/');
