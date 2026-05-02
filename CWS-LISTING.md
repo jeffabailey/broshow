@@ -89,6 +89,14 @@ Use your maintainer email (the one associated with the developer account).
 
 After saving, Chrome Web Store sends a verification email. Click the link inside it. The "verified" badge appears within a few minutes.
 
+### Privacy policy URL
+
+The Privacy practices tab also has a **Privacy policy** field. Use:
+
+> https://github.com/jeffabailey/broshow/blob/main/PRIVACY.md
+
+(The repo's `PRIVACY.md` is publicly viewable and renders as readable HTML on GitHub; CWS reviewers will fetch and read it.)
+
 ---
 
 ## Listing metadata (Store listing tab)
@@ -159,6 +167,7 @@ Once the right column is done, you don't touch the Dashboard for routine release
   - [ ] downloads justification (paste from above)
   - [ ] Remote-code-use: **No** + paste justification
   - [ ] Data usage certification (uncheck all data-collection checkboxes; check the 3 final certifications)
+  - [ ] Privacy policy URL: `https://github.com/jeffabailey/broshow/blob/main/PRIVACY.md`
   - [ ] **Save draft**
 - [ ] CWS Dashboard -> BroShow item -> **Store listing** tab:
   - [ ] Title, summary, description, category, language
