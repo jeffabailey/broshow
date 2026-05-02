@@ -66,7 +66,7 @@ If you haven't already created a CWS listing for BroShow:
 1. Open: https://chrome.google.com/webstore/devconsole
 2. Click **+ New item**
 3. Upload the most recent `broshow-chrome-X.Y.Z.zip` from a GitHub release (e.g., https://github.com/jeffabailey/broshow/releases/download/v0.2.17/broshow-chrome-0.2.17.zip)
-4. Don't fill out the listing yet (you can do that after; CWS will hold it as a draft)
+4. Don't fill out the listing yet — but you'll need to **before** the first real publish. See `CWS-LISTING.md` for copy-paste-ready values for the Privacy Practices tab (justifications, single-purpose description, data-usage certification) and the Settings tab (contact email + verification). These cannot be set via the API; they're a one-time manual step.
 
 To find the **CWS_EXTENSION_ID**:
 
