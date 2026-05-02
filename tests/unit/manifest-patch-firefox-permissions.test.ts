@@ -156,3 +156,82 @@ describe('Step 03-01: Firefox manifest declares MV3 event-page wiring (D1, ADR-0
     }
   });
 });
+
+describe('Firefox manifest swaps PNG icons for the scalable SVG (icons/logo.svg)', () => {
+  // Firefox WebExtensions support SVG icons in `manifest.icons` and
+  // `manifest.action.default_icon`. Chromium does NOT — so the swap is
+  // Firefox-only and lives inside patchManifestForFirefox. This pin holds
+  // the contract so a future refactor can't silently drop the SVG entries
+  // (which would degrade the toolbar/about:addons icon to a fuzzy raster).
+
+  const SOURCE_WITH_PNG_ICONS = {
+    ...SOURCE_MANIFEST,
+    icons: {
+      16: 'icons/icon-16.png',
+      32: 'icons/icon-32.png',
+      48: 'icons/icon-48.png',
+      128: 'icons/icon-128.png',
+    },
+    action: {
+      default_popup: 'popup.html',
+      default_icon: {
+        16: 'icons/icon-16.png',
+        32: 'icons/icon-32.png',
+        48: 'icons/icon-48.png',
+        128: 'icons/icon-128.png',
+      },
+    },
+  };
+
+  it('replaces top-level icons with logo.svg at every standard size', () => {
+    const patched = patchManifestForFirefox(SOURCE_WITH_PNG_ICONS);
+
+    expect(patched.icons).toEqual({
+      16: 'icons/logo.svg',
+      32: 'icons/logo.svg',
+      48: 'icons/logo.svg',
+      128: 'icons/logo.svg',
+    });
+  });
+
+  it('replaces action.default_icon entries with logo.svg', () => {
+    const patched = patchManifestForFirefox(SOURCE_WITH_PNG_ICONS);
+
+    expect(patched.action?.default_icon).toEqual({
+      16: 'icons/logo.svg',
+      32: 'icons/logo.svg',
+      48: 'icons/logo.svg',
+      128: 'icons/logo.svg',
+    });
+  });
+
+  it('preserves action.default_popup (only the icon entries are rewritten)', () => {
+    const patched = patchManifestForFirefox(SOURCE_WITH_PNG_ICONS);
+
+    expect(patched.action?.default_popup).toBe('popup.html');
+  });
+
+  it('does not mutate the input manifest (pure function contract)', () => {
+    const before = JSON.parse(JSON.stringify(SOURCE_WITH_PNG_ICONS));
+    patchManifestForFirefox(SOURCE_WITH_PNG_ICONS);
+    expect(SOURCE_WITH_PNG_ICONS).toEqual(before);
+  });
+
+  it('handles a manifest without an action block gracefully', () => {
+    const manifestSansAction = {
+      ...SOURCE_WITH_PNG_ICONS,
+      action: undefined,
+    };
+    delete (manifestSansAction as unknown as Record<string, unknown>).action;
+
+    const patched = patchManifestForFirefox(manifestSansAction);
+
+    expect(patched.icons).toEqual({
+      16: 'icons/logo.svg',
+      32: 'icons/logo.svg',
+      48: 'icons/logo.svg',
+      128: 'icons/logo.svg',
+    });
+    expect(patched.action).toBeUndefined();
+  });
+});
