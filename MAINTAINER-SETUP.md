@@ -2,13 +2,16 @@
 
 You are about to enable automated publishing of the BroShow extension to the **Chrome Web Store** and **Firefox AMO** (listed channel) via the `release.yml` workflow.
 
-This is a one-time setup. After it's done, every release becomes:
+This is a one-time setup. After it's done, every release becomes a **two-click flow**:
 
 1. `git tag vX.Y.Z && git push origin vX.Y.Z` (existing behavior — builds + GitHub release).
-2. GitHub Actions UI -> **Run workflow** -> approve the `marketplace-prod` environment click.
-3. ~30 seconds of human effort.
+2. **Click 1 — Dispatch the workflow.** Open https://github.com/jeffabailey/broshow/actions/workflows/release.yml -> **Run workflow** form (the one you see now: `tag`, `targets`, `mode` inputs) -> **Run workflow** button. The `release` (build) job starts immediately.
+3. **Click 2 — Approve the environment.** Once `release` finishes and the `publish` job tries to start, the workflow run page shows a yellow **Waiting for review** banner with a **Review deployments** button. Click it -> select `marketplace-prod` -> **Approve and deploy**. The `publish` job starts.
+4. ~30 seconds of total human effort across the two clicks.
 
-**Memory rule preserved**: tag push alone never publishes. Only the explicit Run-workflow + reviewer-approve combination does.
+**Memory rule preserved**: tag push alone never publishes. Run-workflow alone (Click 1) only kicks off the build + queues the publish job; the `publish` job is paused on the environment gate. Only Click 2 (the explicit reviewer approval) actually submits to the marketplaces.
+
+> **CRITICAL — do Steps 1 and 2 BEFORE you ever click Run-workflow with `mode=publish`.** If you dispatch with `mode=publish` before the `marketplace-prod` environment exists with required reviewers, GitHub will auto-create the environment with no protection rules and the publish job will run ungated. You can dispatch with `mode=dry-run` at any time — that path has no environment gate by design (read-only probes; nothing mutates).
 
 **Total time: ~25 minutes.** All steps below run on **macOS**, in **your terminal** (or a browser).
 
@@ -122,7 +125,6 @@ cd /Users/jeffbailey/Projects/foss/leading/broshow
 
 # Confirm you're on main with the latest:
 git status
-git log --oneline -3   # should show 1a0941a, 692ffe4, 9e2d4e9 at the top
 
 # Pass the OAuth client values via env (alternative: the script will prompt
 # you interactively if these are unset):
@@ -192,6 +194,23 @@ CWS_EXTENSION_ID      Updated <date>
 GitHub never displays the values back to you, even as admin.
 
 The existing repo-level secrets `AMO_JWT_ISSUER` and `AMO_JWT_SECRET` (used by the existing release pipeline) are reused for AMO listed publishing. You don't need to touch them.
+
+---
+
+## Where the two clicks happen — visual cue
+
+You won't see anything labelled "marketplace-prod" on the Run-workflow form (that's just the inputs panel). The environment gate appears **on the workflow run page** after Click 1, like this:
+
+```
+[Yellow banner]   Waiting for review
+                  Approve or reject deployments
+
+                  marketplace-prod  awaiting approval
+
+                  [Review deployments]
+```
+
+That's where Click 2 happens. Until then, the run sits paused — it does NOT submit anything to either marketplace.
 
 ---
 
