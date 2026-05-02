@@ -1,6 +1,6 @@
 {
   "name": "broshow",
-  "version": "0.2.17",
+  "version": "0.2.18",
   "description": "Browser extension that records a browser tab and saves as mp4",
   "private": true,
   "type": "module",
