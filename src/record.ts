@@ -19,11 +19,125 @@
 
 import { createMediaRecorderSession } from './mp4';
 import { formatRecordingFilename } from './background-logic';
+import { composeCroppedStream } from './crop-compositor';
+import { toCropRect, type DragRectPreviewPx } from './crop-geometry';
+import type { CropRect } from './types';
 
 type State = 'idle' | 'recording' | 'processing' | 'done';
 
-const button = document.getElementById('action-button') as HTMLButtonElement;
-const status = document.getElementById('status') as HTMLParagraphElement;
+// ---------------------------------------------------------------------------
+// Window-cropped acquisition + error path (AC1.2 / AC2.4) -- injectable seam
+// ---------------------------------------------------------------------------
+// The cropped-window mode requests the WINDOW surface in the gesture, renders it
+// live, crops a sub-rect via the compositor, and hands the cropped stream to the
+// UNCHANGED createRecordingSession. The dependencies (getDisplayMedia, recorder
+// factory, download, status sink, state callback) are passed in so the
+// acquisition + AC2.4 cancel->notice path is unit-testable headlessly (the live
+// capture + real crop pixels are @human-gate -- Chrome 148).
+//
+// On a getDisplayMedia rejection (NotAllowedError / cancelled picker) it renders
+// a VISIBLE one-line notice and returns to idle WITHOUT constructing a recorder
+// or downloading a file -- never silently capturing the wrong surface (AC2.4).
+
+export interface WindowCroppedRecordingDeps {
+  /** getDisplayMedia bound to navigator.mediaDevices (injected for testing). */
+  readonly getDisplayMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
+  /** Recorder-session factory -- the UNCHANGED createRecordingSession (mp4.ts). */
+  readonly createRecordingSession: (stream: MediaStream) => { stop: () => Promise<Blob> };
+  /** chrome.downloads.download-style sink (only ever called on the success path). */
+  readonly download: (args: { url: string; filename: string }) => Promise<unknown>;
+  /** Render a visible status / notice line (owns the AC2.4 notice). */
+  readonly setStatus: (text: string) => void;
+  /** Report the record-page state transitions (idle on cancel). */
+  readonly onStateChange: (state: State) => void;
+  /**
+   * Optional success-path compositor wiring (the live preview + crop). Absent in
+   * unit tests (the compositor is unit-tested directly); the @human-gate dogfood
+   * exercises the real preview + crop pixels. When present it receives the granted
+   * window stream and returns the cropped MediaStream for the recorder.
+   */
+  readonly composeFromGranted?: (granted: MediaStream) => MediaStream;
+}
+
+/** Window-surface constraint for this mode: window display + shared audio. */
+const WINDOW_CROPPED_CONSTRAINTS: MediaStreamConstraints = {
+  video: { displaySurface: 'window' },
+  audio: true,
+};
+
+/**
+ * Acquire the window stream in the gesture and start a cropped recording. On a
+ * getDisplayMedia rejection, surface a visible notice and return to idle without
+ * downloading (AC2.4). Returns the started recorder session on success, or null
+ * if acquisition was rejected.
+ */
+export const startWindowCroppedRecording = async (
+  deps: WindowCroppedRecordingDeps,
+): Promise<{ stop: () => Promise<Blob> } | null> => {
+  let granted: MediaStream;
+  try {
+    granted = await deps.getDisplayMedia(WINDOW_CROPPED_CONSTRAINTS);
+  } catch (error) {
+    // Cancelled picker / NotAllowedError: visible notice, idle, NO download.
+    const e = error as Error;
+    deps.setStatus(
+      `Screen-share cancelled: ${e?.name ?? 'UnknownError'} — ${e?.message ?? 'no message'}`,
+    );
+    deps.onStateChange('idle');
+    return null;
+  }
+
+  // Success path: crop the granted window stream (audio passes through) and hand
+  // the cropped stream to the UNCHANGED recorder. composeFromGranted is supplied
+  // by the DOM composition root (live <video>/<canvas>); the @human-gate dogfood
+  // proves the real crop pixels.
+  const croppedStream = deps.composeFromGranted
+    ? deps.composeFromGranted(granted)
+    : granted;
+  const session = deps.createRecordingSession(croppedStream);
+  deps.onStateChange('recording');
+  return session;
+};
+
+/** Capture frame rate for the cropped canvas stream. */
+const CROPPED_FPS = 30 as const;
+
+/**
+ * Build the success-path `composeFromGranted` from the live preview elements.
+ * Renders the granted window stream in the <video> sink, maps the user-drawn
+ * drag rect (preview CSS px) to a stream-space CropRect via the PURE
+ * crop-geometry, then delegates per-frame cropping to the compositor. The crop
+ * draw + real window pixels are exercised at the @human-gate dogfood (Chrome 148
+ * blocks headless capture); this wiring carries no geometry of its own.
+ */
+export const composeFromPreview = (
+  video: HTMLVideoElement,
+  canvas: HTMLCanvasElement,
+  dragRect: DragRectPreviewPx,
+) => (granted: MediaStream): MediaStream => {
+  video.srcObject = granted;
+  const streamSettings = granted.getVideoTracks()[0]?.getSettings?.() ?? {};
+  const streamIntrinsicSize = {
+    width: streamSettings.width ?? video.videoWidth,
+    height: streamSettings.height ?? video.videoHeight,
+  };
+  const previewRenderedSize = {
+    width: video.clientWidth || streamIntrinsicSize.width,
+    height: video.clientHeight || streamIntrinsicSize.height,
+  };
+  const crop: CropRect = toCropRect(dragRect, previewRenderedSize, streamIntrinsicSize);
+  return composeCroppedStream({ video, canvas, crop, granted, fps: CROPPED_FPS });
+};
+
+// ---------------------------------------------------------------------------
+// DOM composition root (only runs in the real record page)
+// ---------------------------------------------------------------------------
+
+// Resolved by bootstrapRecordPage() when running inside the real record page.
+// Left unbound when the module is imported in a non-DOM context (unit tests
+// exercise the exported seams directly, never the DOM composition root).
+let button!: HTMLButtonElement;
+let status!: HTMLParagraphElement;
 
 let stream: MediaStream | null = null;
 let session: ReturnType<typeof createMediaRecorderSession> | null = null;
@@ -177,13 +291,31 @@ const stopRecording = async (): Promise<void> => {
   }
 };
 
-button.addEventListener('click', () => {
-  if (state === 'idle') {
-    void startRecording();
-  } else if (state === 'recording') {
-    void stopRecording();
-  }
-});
+/**
+ * Wire the record page's DOM composition root. Runs only inside the real record
+ * page (a document with the expected elements). Guarded so importing this module
+ * in a non-DOM unit-test context is side-effect free -- the exported seams
+ * (startWindowCroppedRecording, composeCroppedStream) are tested directly.
+ */
+const bootstrapRecordPage = (): void => {
+  if (typeof document === 'undefined') return;
+  const buttonEl = document.getElementById('action-button') as HTMLButtonElement | null;
+  const statusEl = document.getElementById('status') as HTMLParagraphElement | null;
+  if (buttonEl === null || statusEl === null) return;
 
-status.textContent = 'Ready';
-renderButton();
+  button = buttonEl;
+  status = statusEl;
+
+  button.addEventListener('click', () => {
+    if (state === 'idle') {
+      void startRecording();
+    } else if (state === 'recording') {
+      void stopRecording();
+    }
+  });
+
+  status.textContent = 'Ready';
+  renderButton();
+};
+
+bootstrapRecordPage();

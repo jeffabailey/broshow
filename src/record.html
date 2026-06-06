@@ -14,6 +14,10 @@
       .audio-options label { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
       .audio-options .hint { margin: 8px 0 0 24px; }
       a { color: #0060df; }
+      /* Live preview sink (window-cropped mode). Hidden until a stream is set;
+         the user drags a crop box over it. The compositor canvas is offscreen. */
+      #crop-preview { display: none; max-width: 100%; margin: 12px 0; background: #000; }
+      #crop-canvas { display: none; }
     </style>
   </head>
   <body>
@@ -43,6 +47,14 @@
 
     <button id="action-button">Pick &amp; Start Recording</button>
     <p id="status">Ready</p>
+
+    <!-- Window-cropped mode: live preview of the granted window stream (the
+         crop-box drag surface) and the offscreen compositor canvas. Both are
+         hidden in single-tab/Firefox modes; the compositor draws the cropped
+         sub-rect of the preview video onto the canvas, whose captureStream feeds
+         the unchanged recorder. -->
+    <video id="crop-preview" autoplay muted playsinline></video>
+    <canvas id="crop-canvas"></canvas>
 
     <p class="hint">
       Keep this page open while recording. Click Stop when done.
