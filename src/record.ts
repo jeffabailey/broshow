@@ -220,6 +220,43 @@ export const createCropSelection = (
 };
 
 // ---------------------------------------------------------------------------
+// Honest "Recording window region" indicator (US-1 AC1.3 / US-3 AC3.1) -- 03-02
+// ---------------------------------------------------------------------------
+// The cropped-window stream hides browser chrome but still captures whatever the
+// active window is showing, and it FOLLOWS tab switches within that window (one
+// uninterrupted window stream -- no re-acquire, no tabs.onActivated). The accepted
+// privacy caveat (DESIGN §16) is answered honestly by an always-visible scope
+// signal on the record page (the surface that owns the window-region capture for
+// the whole session): Dana always SEES that the active window's region is what's
+// being recorded. This is a pure PROJECTION of the existing active/idle
+// distinction -- it introduces NO new RecordingState node.
+
+/** The honest scope copy: the meaning DISTILL pinned for the indicator. */
+export const RECORDING_REGION_INDICATOR_TEXT = 'Recording window region' as const;
+
+/**
+ * Render the honest "Recording window region" indicator onto a single element.
+ * When the record page is acting as the window-region capture host (`active`),
+ * the indicator shows the honest scope copy and is visible so Dana always knows
+ * the capture scope -- it never disappears or goes stale mid-session, across any
+ * number of in-window tab switches (one stream, one indicator). When the surface
+ * is NOT the window-region host (`active` false, e.g. idle / a reused single-tab
+ * record page), the indicator is hidden so the page never lies about an inactive
+ * scope. PURE over the element surface -- no state machine, no chrome APIs.
+ */
+export const renderRecordingRegionIndicator = (
+  indicator: HTMLElement,
+  active: boolean,
+): void => {
+  if (active) {
+    indicator.textContent = RECORDING_REGION_INDICATOR_TEXT;
+    indicator.hidden = false;
+    return;
+  }
+  indicator.hidden = true;
+};
+
+// ---------------------------------------------------------------------------
 // DOM composition root (only runs in the real record page)
 // ---------------------------------------------------------------------------
 
@@ -395,6 +432,17 @@ const bootstrapRecordPage = (): void => {
 
   button = buttonEl;
   status = statusEl;
+
+  // Honest scope banner (US-1 AC1.3 / US-3 AC3.1): the record page is the
+  // window-region capture host for the whole session, so the indicator is shown
+  // for as long as this surface is open. It stays present/accurate across every
+  // in-window tab switch because there is ONE window stream and ONE indicator --
+  // no re-acquire, no tabs.onActivated. Absence of the element is tolerated so
+  // importing this module never hard-fails on an unexpected DOM.
+  const indicatorEl = document.getElementById('recording-region-indicator');
+  if (indicatorEl !== null) {
+    renderRecordingRegionIndicator(indicatorEl, true);
+  }
 
   button.addEventListener('click', () => {
     if (state === 'idle') {

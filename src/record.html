@@ -14,6 +14,21 @@
       .audio-options label { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
       .audio-options .hint { margin: 8px 0 0 24px; }
       a { color: #0060df; }
+      /* Honest "Recording window region" scope banner (US-1 AC1.3 / US-3 AC3.1).
+         The cropped-window stream hides chrome but follows tab switches within the
+         shared window; this always-visible signal tells Dana the active window's
+         region is what's being captured. record.ts shows it for the whole session
+         (one stream, one indicator -- never stale, no tabs.onActivated). */
+      #recording-region-indicator {
+        margin: 12px 0; padding: 10px 12px; border-radius: 6px;
+        background: #fde7e7; border: 1px solid #f5b5b5; color: #8a1f1f;
+        font-size: 14px; font-weight: 600; display: flex; align-items: center;
+        gap: 8px;
+      }
+      #recording-region-indicator::before {
+        content: ''; width: 10px; height: 10px; border-radius: 50%;
+        background: #D32F2F; display: inline-block;
+      }
       /* Live preview sink (window-cropped mode). Hidden until a stream is set;
          the user drags a crop box over it. The compositor canvas is offscreen. */
       #crop-stage { display: none; position: relative; margin: 12px 0; max-width: 100%; }
@@ -38,6 +53,13 @@
   </head>
   <body>
     <h2>BroShow Recorder (Firefox)</h2>
+
+    <!-- Honest "Recording window region" scope indicator (US-1 AC1.3 / US-3
+         AC3.1). Hidden by default; record.ts reveals it while this surface hosts
+         the window-region capture so Dana always sees the scope being recorded.
+         It follows tab switches within the shared window without going stale --
+         one window stream, one indicator, no tabs.onActivated. -->
+    <p id="recording-region-indicator" hidden>Recording window region</p>
 
     <div class="audio-options">
       <label>
