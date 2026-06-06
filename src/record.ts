@@ -130,6 +130,96 @@ export const composeFromPreview = (
 };
 
 // ---------------------------------------------------------------------------
+// Live drag-to-select crop region (03-01) -- preview-coord capture, NO crop math
+// ---------------------------------------------------------------------------
+// The user drags a rectangle over the live <video> window preview; record.ts
+// captures that drag in PREVIEW CSS-pixel coordinates and, on confirm, hands the
+// preview-coord DragRectPreviewPx to the PURE crop-geometry (via composeFromPreview
+// -> toCropRect). This module contributes ONLY the preview-coord rectangle: every
+// scale/clamp/round operation lives in crop-geometry.ts. No chrome-height
+// estimation -- the drag is WYSIWYG over the live preview (ADR-011).
+
+/** A pointer position in preview CSS-pixel coordinates (overlay offset space). */
+interface PointerPoint {
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * Derive a preview-coord drag rectangle from the pointer-down and pointer-up
+ * points. Direction-normalized: the origin is the min corner and width/height are
+ * non-negative, so dragging up-left or down-right yields the same rectangle. PURE
+ * -- this is plain min/abs over preview coordinates, NOT crop geometry (no
+ * preview->stream scaling, no clamping; that is crop-geometry.ts's job).
+ */
+export const dragRectFromPointers = (
+  start: PointerPoint,
+  end: PointerPoint,
+): DragRectPreviewPx => ({
+  x: Math.min(start.x, end.x),
+  y: Math.min(start.y, end.y),
+  w: Math.abs(end.x - start.x),
+  h: Math.abs(end.y - start.y),
+});
+
+/** A live crop selection over the preview overlay: confirm hands over the rect. */
+export interface CropSelection {
+  /** Report the captured preview-coord drag rect to the confirm callback (if any). */
+  readonly confirm: () => void;
+}
+
+/**
+ * Wire pointer drag-capture over the preview overlay element. Tracks pointerdown
+ * -> pointermove -> pointerup, deriving the live preview-coord rectangle via the
+ * PURE dragRectFromPointers, and shows the selection box by styling the overlay's
+ * marquee. On confirm, hands the captured rect to onConfirm. If no drag has
+ * occurred, confirm is a no-op (nothing to crop). Holds NO crop math -- the rect
+ * is in preview coords; crop-geometry maps it to stream space downstream.
+ */
+export const createCropSelection = (
+  overlay: HTMLElement,
+  onConfirm: (rect: DragRectPreviewPx) => void,
+): CropSelection => {
+  let origin: PointerPoint | null = null;
+  let current: DragRectPreviewPx | null = null;
+
+  const paintMarquee = (rect: DragRectPreviewPx): void => {
+    overlay.style.setProperty('--crop-x', `${rect.x}px`);
+    overlay.style.setProperty('--crop-y', `${rect.y}px`);
+    overlay.style.setProperty('--crop-w', `${rect.w}px`);
+    overlay.style.setProperty('--crop-h', `${rect.h}px`);
+  };
+
+  overlay.addEventListener('pointerdown', (event: PointerEvent) => {
+    origin = { x: event.offsetX, y: event.offsetY };
+    current = dragRectFromPointers(origin, origin);
+    overlay.setPointerCapture?.(event.pointerId);
+    paintMarquee(current);
+  });
+
+  overlay.addEventListener('pointermove', (event: PointerEvent) => {
+    if (origin === null) return;
+    current = dragRectFromPointers(origin, { x: event.offsetX, y: event.offsetY });
+    paintMarquee(current);
+  });
+
+  overlay.addEventListener('pointerup', (event: PointerEvent) => {
+    if (origin === null) return;
+    current = dragRectFromPointers(origin, { x: event.offsetX, y: event.offsetY });
+    overlay.releasePointerCapture?.(event.pointerId);
+    paintMarquee(current);
+    origin = null;
+  });
+
+  return {
+    confirm: (): void => {
+      if (current === null) return;
+      onConfirm(current);
+    },
+  };
+};
+
+// ---------------------------------------------------------------------------
 // DOM composition root (only runs in the real record page)
 // ---------------------------------------------------------------------------
 
