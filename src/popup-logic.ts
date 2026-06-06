@@ -7,7 +7,13 @@
 // - Wiring function that connects DOM elements to pure logic
 // ---------------------------------------------------------------------------
 
-import type { RecordingState, PopupToSW, SWToPopup, RecordingPath } from './types';
+import type {
+  RecordingState,
+  PopupToSW,
+  SWToPopup,
+  RecordingPath,
+  RecordingMode,
+} from './types';
 
 // Re-export RecordingPath so existing imports from popup-logic continue to
 // resolve without churn. The canonical home is types.ts (wire-format types).
@@ -172,6 +178,10 @@ export function messageForAction(
   path: 'firefox-display-media',
 ): PopupToSW;
 export function messageForAction(
+  action: 'start',
+  path: 'window-cropped',
+): PopupToSW;
+export function messageForAction(
   action: PopupAction,
   path?: RecordingPath,
   streamId?: string,
@@ -183,6 +193,12 @@ export function messageForAction(
   if (path === 'firefox-display-media') {
     return { type: 'start-recording', path: 'firefox-display-media' };
   }
+  // record-all-tabs (R1-cropped), data-models.md §5: the window-cropped
+  // variant carries the mode discriminant only -- no streamId, no CropRect on
+  // the wire. The CropRect is consumed locally in the record page.
+  if (path === 'window-cropped') {
+    return { type: 'start-recording', path: 'window-cropped' };
+  }
   // Default to the chromium variant for safety; the popup adapter always
   // supplies a path when the capability probe ran.
   return {
@@ -191,6 +207,32 @@ export function messageForAction(
     streamId: streamId ?? '',
   };
 }
+
+/**
+ * Pure mapping from the popup's user-facing RecordingMode to the wire-level
+ * RecordingPath discriminant. record-all-tabs (R1-cropped), data-models.md §3.
+ *
+ * UI vocabulary (RecordingMode) and wire format (RecordingPath) are distinct so
+ * they can evolve independently; this is the single seam that routes every mode
+ * to a path. ADR-012: 'window-cropped' is a target-blind pipeline discriminant
+ * routed to its own path -- it does NOT add a platform branch.
+ *
+ *   'single-tab'     -> 'chromium-offscreen'    (existing single-tab pipeline)
+ *   'desktop-screen' -> 'firefox-display-media' (existing getDisplayMedia pipeline)
+ *   'window-cropped' -> 'window-cropped'        (NEW cropped-window pipeline)
+ *
+ * Total over RecordingMode: every user-facing mode is routed (no unrouted mode).
+ */
+export const modeToPath = (mode: RecordingMode): RecordingPath => {
+  switch (mode) {
+    case 'single-tab':
+      return 'chromium-offscreen';
+    case 'desktop-screen':
+      return 'firefox-display-media';
+    case 'window-cropped':
+      return 'window-cropped';
+  }
+};
 
 /** Apply a UIDescription to DOM elements. */
 const applyUI = (

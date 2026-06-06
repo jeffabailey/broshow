@@ -12,6 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import type { RecordingPath } from './types';
+import { detectRecordingCapability, type ProbeGlobals } from './popup-logic';
 import {
   createChromiumOffscreenRecorderHost,
   createDefaultChromiumDeps,
@@ -101,13 +102,30 @@ export const selectHost = (target: Target): RecorderHost & SelectedHost => {
  *
  * 'chromium-offscreen'   -> 'chromium'
  * 'firefox-display-media'-> 'firefox'
+ *
+ * record-all-tabs (R1-cropped), data-models.md §2 + ADR-012: 'window-cropped'
+ * is a TARGET-BLIND pipeline discriminant. It does not name its own target;
+ * instead it resolves to the *running* target detected by the capability probe.
+ * We therefore recurse onto the probe-detected target-bearing path -- reusing
+ * the two existing cases -- rather than introducing a third Target or a new
+ * `target ===` platform branch. `selectHost` remains the single platform branch.
  */
-export const targetForPath = (path: RecordingPath): Target => {
+export const targetForPath = (
+  path: RecordingPath,
+  globals: ProbeGlobals = globalThis as ProbeGlobals,
+): Target => {
   switch (path) {
     case 'chromium-offscreen':
       return 'chromium';
     case 'firefox-display-media':
       return 'firefox';
+    case 'window-cropped': {
+      const capability = detectRecordingCapability(globals);
+      const runningPath: RecordingPath = capability.supported
+        ? capability.path
+        : 'chromium-offscreen';
+      return targetForPath(runningPath, globals);
+    }
   }
 };
 
