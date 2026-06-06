@@ -1,0 +1,46 @@
+# BroShow — Jobs-to-be-Done SSOT
+# Bootstrapped during DISCUSS for record-all-tabs (2026-06-05).
+# Every user-facing story must reference a job_id below.
+
+jobs:
+  - job_id: capture-multi-tab-workflow
+    title: Capture a workflow that spans several tabs as one continuous video
+    job_story: >
+      When I'm recording a workflow that moves across several tabs
+      (e.g. docs → app → dashboard), I want the recording to follow whichever
+      tab I'm actively looking at, so I can produce one continuous video
+      without stopping, restarting, and stitching for each tab.
+    dimensions:
+      functional: >
+        Produce a single gap-free mp4 covering activity across multiple tabs in
+        the recording window, with capture following the active tab.
+      emotional: >
+        Feel in control and unworried — confident the recording "just works"
+        and that no footage is lost at the seams between tabs.
+      social: >
+        Look polished in shared demos: no visible "let me restart the
+        recording" fumbles, no jump-cut stitching artifacts.
+    four_forces:
+      push: >
+        Today recording is locked to the tab it started on. Switching tabs
+        records the now-backgrounded original tab (useless footage), so users
+        must stop, switch, restart, and stitch externally.
+      pull: >
+        A recording that automatically follows the active tab and yields one
+        seamless file ready to share.
+      anxiety: >
+        Will switching tabs cause gaps/glitches? Will it silently capture a
+        sensitive tab I switch to (banking, email)? Will every switch trigger a
+        permission prompt? CPU cost of re-acquiring capture?
+      habit: >
+        Users currently pre-plan to keep everything in one tab, or fall back to
+        desktop/screen recording (losing tab-scoped framing).
+    opportunity:
+      importance: high
+      satisfaction: low
+      note: >
+        Single primary job for this feature; full opportunity-scoring table
+        deferred (lightweight JTBD per DISCUSS config 2026-06-05).
+    personas: [demo-dana]
+    feature: record-all-tabs
+    validated: false  # assumption-stage; not yet evidence-backed via interviews

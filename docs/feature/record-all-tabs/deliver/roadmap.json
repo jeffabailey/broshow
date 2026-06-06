@@ -1,0 +1,175 @@
+{
+  "roadmap": {
+    "project_id": "record-all-tabs",
+    "created_at": "2026-06-06T00:00:00Z",
+    "total_steps": 7,
+    "phases": 3
+  },
+  "phases": [
+    {
+      "id": "01",
+      "name": "Pure seams (crop math + mode/path discriminant + mode control)",
+      "description": "Land the headless-testable pure core FIRST -- it carries the >=80% mutation gate (CLAUDE.md per-feature). Replace the crop-geometry RED scaffold with the real preview-rect -> stream CropRect mapping (the only non-trivial new logic, primary mutation target), widen the pure mode/path mapping so the 'window-cropped' start-recording variant and targetForPath totality are proven without a browser, then surface the new mode control in the popup. No capture, no getDisplayMedia, no canvas yet -- everything in this phase runs in CI today (Chrome 148 / SPIKE testability constraint). Additive only: the single-tab and desktop modes and the offscreen/streamId contract are byte-for-byte unchanged.",
+      "dependencies": [],
+      "steps": [
+        {
+          "id": "01-01",
+          "name": "Implement crop-geometry.ts (drag-rect -> stream CropRect) to GREEN -- primary mutation target",
+          "description": "Replace the RED scaffold in src/crop-geometry.ts with the real pure implementation of toCropRect(dragRectPreviewPx, previewRenderedSize, streamIntrinsicSize) -> CropRect and outputDimensions(crop). Per-axis preview->stream scale (letterbox-safe), clamp the rect fully inside [0,streamWidth] x [0,streamHeight], normalize a degenerate (zero-area) drag to a positive minimum, clamp negative origins to (0,0), round to integer pixels, and round output dimensions to even values (H.264 encoder requirement). Remove the __SCAFFOLD__ marker. Unskip the crop-geometry scenarios one at a time. This is the PRIMARY mutation target -- run the >=80% kill gate scoped to crop-geometry.ts after GREEN. PURE: no DOM, no canvas, no chrome/navigator; depends only on types.ts (stays under the no-chrome-in-pure-logic dependency-cruiser rule).",
+          "criteria": "Given a 320x180 drag at (160,90) over a 640x360 preview of a 1280x720 stream (half scale), when toCropRect maps it, then it returns { x:320, y:180, w:640, h:360 } (per-axis 2x scale applied). Given a drag that overshoots the preview edges, then the returned CropRect satisfies 0<=x, 0<=y, x+w<=streamWidth, y+h<=streamHeight (clamped). Given a zero-area drag, then w>0 and h>0 (degenerate normalized). Given a negative-origin drag, then x===0 and y===0. Given a full-preview drag, then the crop covers the whole stream. Given a letterboxed preview (640x180 of 1280x720), then X scales by 2 and Y by 4 independently. All returned coordinates are integers; outputDimensions returns even width and height. The >=80% mutation kill gate passes scoped to src/crop-geometry.ts and zero __SCAFFOLD__ markers remain.",
+          "estimated_time": "90min",
+          "dependencies": [],
+          "files_to_modify": [
+            "src/crop-geometry.ts",
+            "tests/unit/record-all-tabs-crop-geometry.test.ts"
+          ],
+          "test_file": "tests/unit/record-all-tabs-crop-geometry.test.ts",
+          "scenario_name": "toCropRect maps a preview drag rect to a clamped, integer, per-axis-scaled stream CropRect and outputDimensions yields even canvas dimensions (full crop-geometry suite incl. clamping, degenerate-drag normalization, negative-origin, full-preview identity, letterbox non-uniform scale, integrality, even-output)"
+        },
+        {
+          "id": "01-02",
+          "name": "window-cropped start-message variant + modeToPath + targetForPath totality (pure)",
+          "description": "Widen the pure mode/path mapping in src/popup-logic.ts and src/recorder-host.ts so the 'window-cropped' mode is routable without a browser. Add the messageForAction('start','window-cropped') overload returning { type:'start-recording', path:'window-cropped' } (no streamId, per data-models.md §5). Export modeToPath (RecordingMode -> RecordingPath) from popup-logic.ts so every user-facing mode is routed (ADR-012). Make targetForPath total over the widened RecordingPath union: 'window-cropped' resolves to the running target via the already-detected capability probe, NOT via a new `target ===` branch (data-models.md §2 -- the single platform branch selectHost stays untouched). Unskip the mode-mapping scenarios one at a time. PURE: no new effect imports; the existing chromium/firefox/stop variants stay byte-for-byte unchanged (AC1.1 regression).",
+          "criteria": "Given the window-cropped mode, when messageForAction('start','window-cropped') runs, then it returns exactly { type:'start-recording', path:'window-cropped' } with no streamId field present. Given the existing modes, then messageForAction('start','chromium-offscreen','stream-123'), messageForAction('start','firefox-display-media'), and messageForAction('stop') are byte-for-byte unchanged (AC1.1). Given targetForPath('chromium-offscreen') and targetForPath('firefox-display-media'), then they still return 'chromium' and 'firefox'. Given targetForPath('window-cropped'), then it returns a valid Target (chromium or firefox) WITHOUT introducing a third target or a new platform branch (selectHost is the only `target ===` site -- verifiable via grep / dependency-cruiser). modeToPath routes all three RecordingMode values, with 'window-cropped' -> 'window-cropped'.",
+          "estimated_time": "75min",
+          "dependencies": [
+            "01-01"
+          ],
+          "files_to_modify": [
+            "src/popup-logic.ts",
+            "src/recorder-host.ts",
+            "tests/unit/record-all-tabs-mode-mapping.test.ts"
+          ],
+          "test_file": "tests/unit/record-all-tabs-mode-mapping.test.ts",
+          "scenario_name": "messageForAction emits the window-cropped start variant (no streamId), modeToPath routes every mode, and targetForPath stays total over the widened union without a new platform branch (existing variants unchanged -- AC1.1 regression)"
+        },
+        {
+          "id": "01-03",
+          "name": "Popup offers the 'Record all tabs (window, cropped)' mode, single-tab still default (walking skeleton, headless-safe)",
+          "description": "Add the new top-level mode control 'Record all tabs (window, cropped)' to the popup (additive markup in popup.html + styling in popup.css; popup.ts reads the selection and maps it via modeToPath). Default selection stays 'single-tab' so the existing path is byte-for-byte unchanged when the user never touches the control (AC1.1). This is the HEADLESS-SAFE half of the walking skeleton: it proves the new mode is OFFERED through the real popup and the default Start Recording control is untouched -- it runs in CI now (no capture, no getDisplayMedia). The full crop-draw + record + cropped-file flow is the @human-gate dogfood scenario in walking-skeleton.spec.ts (test.fixme), enabled at the slice-01 dogfood boundary, NOT CI-gating.",
+          "criteria": "Given Dana opens the real popup in a loaded Chromium extension, when the popup renders, then a control offering the 'Record all tabs' (window, cropped) mode is visible AND the default Start Recording button is still present and enabled (single-tab default unchanged -- AC1.1). The headless-safe walking-skeleton scenario passes in CI. Zero outbound network requests during the popup interaction. The single-tab and desktop modes remain selectable and unchanged. The @human-gate full-flow walking-skeleton scenario stays test.fixme (run as the slice-01 dogfood pass, not CI).",
+          "estimated_time": "75min",
+          "dependencies": [
+            "01-02"
+          ],
+          "files_to_modify": [
+            "src/popup.html",
+            "src/popup.css",
+            "src/popup.ts"
+          ],
+          "test_file": "tests/acceptance/record-all-tabs/walking-skeleton.spec.ts",
+          "scenario_name": "Dana opens the popup and sees a 'Record all tabs' mode she can choose, with single-tab still the default (AC1.1 -- walking-skeleton headless-safe scenario; full crop+record flow is the @human-gate dogfood fixme)"
+        }
+      ]
+    },
+    {
+      "id": "02",
+      "name": "Capture + compositor wiring (record-page getDisplayMedia(window) + canvas crop)",
+      "description": "Thread the window-cropped RecordingPath from popup -> record page and add the canvas-crop compositing stage UPSTREAM of the unchanged createRecordingSession. The record page (already the shipped Firefox recorder surface) owns the getDisplayMedia({displaySurface:'window'}) gesture; the compositor draws the cropped sub-rect each frame and exposes canvas.captureStream(); the recorder pipeline (mp4.ts) and the offscreen/RecorderHost port are UNCHANGED (mode is orthogonal to target -- ADR-012/ADR-013). Audio passes through 'include if shared' (Decision B). Continuity is structural: one uninterrupted window stream, no re-acquire on tab switch, no tabs.onActivated handler. The capture/compositor seams are exercised via the @human-gate dogfood pass (Chrome 148 blocks CLI/CDP capture); the routing observable is automatable.",
+      "dependencies": [
+        "01"
+      ],
+      "steps": [
+        {
+          "id": "02-01",
+          "name": "Route the window-cropped mode from the popup to the record page (gesture + preview owner)",
+          "description": "Wire src/popup.ts so that when the user selects 'Record all tabs (window, cropped)' and clicks Start, the popup opens the record page (record.html) in a window -- reusing the shipped Firefox launcher path (chrome.windows.create) so the record page carries the user gesture that getDisplayMedia requires. background-logic.ts carries the 'window-cropped' discriminant through start-recording to flip state / set the badge WITHOUT adding a state-graph branch or a tabs.onActivated handler (the SW only needs to know a window-cropped recording is starting). The popup origin must NEVER call getDisplayMedia itself. Single-tab and desktop routing are unchanged. Unskip the milestone-1 routing scenario (#4).",
+          "criteria": "Given Dana selects 'Record all tabs' and clicks Start, when the popup handles the gesture, then it opens record.html in a window (a record-page window opens; URL contains 'record.html') and sends { type:'start-recording', path:'window-cropped' } to the SW -- the popup origin never calls getDisplayMedia. Given the single-tab default, then the existing chromium-offscreen routing is byte-for-byte unchanged (regression scenario in milestone-1 still passes). background-logic flips idle->recording on the window-cropped start and sets the REC badge without a new state-graph node and without installing a tabs.onActivated handler. The milestone-1 routing scenario (#4) passes once routing is wired.",
+          "estimated_time": "75min",
+          "dependencies": [
+            "01-03"
+          ],
+          "files_to_modify": [
+            "src/popup.ts",
+            "src/background-logic.ts",
+            "tests/acceptance/record-all-tabs/milestone-1-window-cropped-record.spec.ts"
+          ],
+          "test_file": "tests/acceptance/record-all-tabs/milestone-1-window-cropped-record.spec.ts",
+          "scenario_name": "selecting 'Record all tabs' then Start opens the record page that owns the window-surface getDisplayMedia gesture and sends the window-cropped start message (AC1.2); single-tab routing regression unchanged (AC1.1)"
+        },
+        {
+          "id": "02-02",
+          "name": "getDisplayMedia(window) acquisition + canvas-crop compositor upstream of createRecordingSession",
+          "description": "In the record page, add the window-cropped mode branch: request getDisplayMedia({ video:{ displaySurface:'window' }, audio:true }) in the gesture, render the granted stream live in a <video> sink, and insert the NEW effect module src/crop-compositor.ts between the granted stream and the UNCHANGED createRecordingSession. The compositor consumes the CropRect (from the pure crop-geometry.ts) and per frame draws video[CropRect] onto a <canvas>, exposing canvas.captureStream(fps) as the cropped video track; the granted audio track (if any) passes through unchanged (Decision B -- include if shared). The compositor holds NO geometry of its own (delegates to crop-geometry.ts) and never restarts on tab switch -- one stream for the whole session (continuity is structural). The existing Firefox display-media path and the single-tab offscreen/streamId path are unchanged. Capture is exercised via the @human-gate dogfood pass (AC-crop, AC2.3, AC2.4) since Chrome 148 blocks CLI/CDP capture.",
+          "criteria": "Given the record page is opened in window-cropped mode, when the gesture fires, then it calls getDisplayMedia with displaySurface:'window' and audio:true and renders the live stream in a <video> preview. Given a CropRect, then crop-compositor.ts draws only that sub-rect each frame onto a canvas and hands canvas.captureStream(fps) (cropped video + pass-through audio if shared) to the UNCHANGED createRecordingSession -- mp4.ts is not modified. Given a tab switch mid-recording, then the compositor and recorder keep running on the SAME stream (no re-acquire, no second file). Given the dogfood human gate (slice-01), then the downloaded video's dimensions match the crop output size, exactly ONE file named broshow-YYYY-MM-DD-HHmmss.{mp4|webm} is produced (AC2.3), and a cancelled surface picker surfaces a visible notice and returns to idle without producing a file (AC2.4). The single-tab offscreen/streamId contract is byte-for-byte preserved. AC2.4 OWNERSHIP: record.ts catches a getDisplayMedia rejection (NotAllowedError / user-cancelled picker), renders a visible one-line notice (e.g. \"Screen-share cancelled\"), and returns to idle WITHOUT downloading a file -- never silently dropping footage.",
+          "estimated_time": "120min",
+          "dependencies": [
+            "02-01"
+          ],
+          "files_to_modify": [
+            "src/record.ts",
+            "src/crop-compositor.ts",
+            "src/record.html"
+          ],
+          "test_file": "tests/acceptance/record-all-tabs/milestone-1-window-cropped-record.spec.ts",
+          "scenario_name": "the cropped-window record flow acquires getDisplayMedia(window), crops via the canvas compositor upstream of the unchanged createRecordingSession, passes through audio if shared, and downloads one cropped broshow-* file (AC1.2, AC-crop, AC2.3, AC2.4 @human-gate dogfood)"
+        }
+      ]
+    },
+    {
+      "id": "03",
+      "name": "Crop-selection UI + honest 'Recording window region' indicator",
+      "description": "Add the live drag-to-select crop region over the window preview in record.html (the user-drawn rectangle whose preview coords feed the pure crop-geometry.ts), and the honest 'Recording window region' indicator (US-3 AC1.3 / AC3.1) so Dana always knows the scope being captured -- the answer to the accepted privacy caveat (cropping hides chrome, so the captured scope must be SHOWN). Follow-across-switches is verified as a structural property (one stream, one download after N switches -- no re-acquire). The indicator PRESENCE is automatable headless; crop fidelity, follow accuracy across switches, <=1-gesture stop, and out-of-window hold are the @human-gate slice-02 dogfood pass (real window pixels + real tab activation, Chrome 148 constraint).",
+      "dependencies": [
+        "02"
+      ],
+      "steps": [
+        {
+          "id": "03-01",
+          "name": "Live drag-to-select crop region over the window preview in record.html",
+          "description": "Add the crop-selection UI to the record page for window-cropped mode: an overlay over the live <video> window preview that captures a pointer-drag rectangle (in preview CSS-pixel coords), shows the selection box, and on confirm hands the drag rect to the pure crop-geometry.ts toCropRect -- which maps it to the stream-space CropRect consumed by crop-compositor.ts (the CropRect never crosses a message boundary; it is consumed in the page that produced the stream). No chrome-height estimation (ADR-011 -- WYSIWYG over the live preview). The overlay markup/styling lives in record.html; the drag-capture + confirm wiring lives in record.ts; all geometry is delegated to crop-geometry.ts (record.ts holds no crop math). This is the @human-gate crop-fidelity dogfood seam (real pointer drag over real window pixels).",
+          "criteria": "Given the window-cropped record page with a live window preview, when Dana drags a rectangle over the content area and confirms, then record.ts captures the preview-coord drag rect and passes it to crop-geometry.ts toCropRect (no crop math in record.ts) and the resulting stream-space CropRect drives crop-compositor.ts. Given the slice-01 dogfood human gate, then a human reviewer confirms on production data that the downloaded video shows ONLY the user-drawn region -- no tab strip, toolbar, or other windows -- and the recorded dimensions equal the crop output size (robust proxy, NOT a pixel diff). The crop selection uses the live preview (no chrome-height estimation per ADR-011). The existing Firefox display-media path (no crop overlay) is unchanged.",
+          "estimated_time": "90min",
+          "dependencies": [
+            "02-02"
+          ],
+          "files_to_modify": [
+            "src/record.html",
+            "src/record.ts"
+          ],
+          "test_file": "tests/acceptance/record-all-tabs/milestone-1-window-cropped-record.spec.ts",
+          "scenario_name": "Dana drags a crop region over the live window preview and the downloaded video shows ONLY that region with no chrome -- live-preview WYSIWYG, geometry delegated to crop-geometry.ts (AC-crop slice-01 @human-gate dogfood)"
+        },
+        {
+          "id": "03-02",
+          "name": "'Recording window region' honest indicator + follow-across-switches verification",
+          "description": "Add the visible 'Recording window region' indicator to the record-page (and/or popup) DOM so Dana always sees the scope being captured (US-1 AC1.3 / US-3 AC3.1 -- the honest answer to the accepted privacy caveat). The indicator PRESENCE/text is automatable headless and is the ENABLED milestone-2 scenario (#8). Follow-across-switches is verified as a STRUCTURAL property: because there is one uninterrupted window stream (no re-acquire, no tabs.onActivated handler), N tab switches still yield exactly ONE download -- the indicator never disappears or goes stale mid-session. Follow accuracy across switches, <=1-gesture stop (AC3.3), and out-of-window hold (AC3.2 / D2) are the @human-gate slice-02 dogfood pass (real tab activation). background-logic carries the indicator-state through the unchanged state graph.",
+          "criteria": "Given the cropped-window record surface, when it is active, then a visible indicator with the 'Recording window region' meaning is present in the DOM (milestone-2 #8 passes headless once wired). Given the slice-02 dogfood human gate, then across 3 tab switches in the same window exactly ONE file downloads (not a second file per switch -- follow is structural, not re-acquire), the indicator stays present and accurate the whole session (AC3.1), Stop finalizes in a single gesture regardless of switch count (AC3.3), and activating a tab in a DIFFERENT window does NOT extend capture to it (AC3.2 / D2 -- capture holds on the originally-shared window). background-logic's state graph is unchanged; no tabs.onActivated handler is installed. AC3.3: clicking Stop (in record.html or via the popup) finalizes the recording synchronously in a SINGLE user gesture -- no secondary confirmation, no async stall -- producing exactly one downloaded file.",
+          "estimated_time": "75min",
+          "dependencies": [
+            "03-01"
+          ],
+          "files_to_modify": [
+            "src/record.html",
+            "src/record.ts",
+            "tests/acceptance/record-all-tabs/milestone-2-follow-and-indicator.spec.ts"
+          ],
+          "test_file": "tests/acceptance/record-all-tabs/milestone-2-follow-and-indicator.spec.ts",
+          "scenario_name": "the cropped-window surface carries a visible 'Recording window region' indicator (AC1.3 headless) and follows tab switches as one stream -- one file after N switches, accurate indicator, <=1-gesture stop, out-of-window hold (AC2.1/AC3.1/AC3.2/AC3.3 @human-gate dogfood)"
+        }
+      ]
+    }
+  ],
+  "implementation_scope": {
+    "source_directories": [
+      "src/"
+    ],
+    "test_directories": [
+      "tests/unit/",
+      "tests/acceptance/record-all-tabs/"
+    ],
+    "excluded_patterns": [
+      "node_modules/**",
+      "dist/**",
+      "dist-firefox/**",
+      "**/*.d.ts"
+    ]
+  },
+  "validation": {
+    "status": "approved",
+    "reviewer": "solution-architect-reviewer",
+    "approved_at": "TODO",
+    "reviewed_by": "nw-software-crafter-reviewer",
+    "review_note": "APPROVED with mandatory clarifications applied to 02-02 (AC2.4 ownership) and 03-02 (AC3.3 single-gesture stop). AC1.4 satisfied-by-inheritance via existing getDisplayMedia capability probe (non-blocking)."
+  }
+}

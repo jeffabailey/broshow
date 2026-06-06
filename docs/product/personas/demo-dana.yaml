@@ -1,0 +1,28 @@
+# Persona SSOT — Demo Dana
+# Bootstrapped during DISCUSS for record-all-tabs (2026-06-05).
+
+persona_id: demo-dana
+name: Demo Dana
+one_liner: >
+  Developer advocate / solo founder who records product walkthroughs and bug
+  repros that naturally move across several browser tabs.
+
+goals:
+  - Produce share-ready demo videos quickly, without a video editor.
+  - Show real end-to-end flows (marketing site → app → admin dashboard) in one take.
+  - Keep recordings private/local — demos may show pre-release product.
+
+frustrations:
+  - Recording is stuck on the first tab; switching tabs ruins the take.
+  - Stitching multiple per-tab clips in an editor is slow and looks amateurish.
+  - Desktop/screen recording captures the whole OS chrome and other windows.
+
+mental_model:
+  - "I press record, do my thing across tabs, press stop, and get a video."
+  - Expects the recording to "follow my eyes" — whatever tab is in front.
+  - Does NOT expect to re-grant permission every time they switch tabs.
+
+vocabulary:
+  - "follow the tab", "one take", "seamless", "the active tab", "my window"
+
+# Vendor-neutral: no tool/brand names baked into persona needs.

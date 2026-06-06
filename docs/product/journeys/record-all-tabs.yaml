@@ -1,0 +1,56 @@
+# Journey SSOT — record-all-tabs (follow active tab)
+# Bootstrapped during DISCUSS (2026-06-05). Lightweight depth: happy path +
+# key error paths. Refine in DESIGN once the capture-follow SPIKE resolves.
+
+journey_id: record-all-tabs
+persona: demo-dana
+job_id: capture-multi-tab-workflow
+mode: follow-active-tab   # one continuous file; capture switches with the active tab
+
+happy_path:
+  - step: choose-follow-mode
+    action: User opens the popup and enables "Follow active tab" mode.
+    output: Popup shows follow mode armed; start control reflects multi-tab intent.
+    emotion: curious / hopeful
+    shared_artifact: recording_mode  # source of truth: popup control state
+  - step: start
+    action: User clicks Record (single user gesture).
+    output: REC badge appears; recording begins on the current active tab.
+    emotion: committed
+    shared_artifact: recording_session  # source of truth: service-worker RecordingState
+  - step: switch-tab
+    action: User activates a different tab in the same window.
+    output: Capture follows to the new tab; the single output file continues without a gap.
+    emotion: relieved / in-control
+    shared_artifact: active_capture_source  # source of truth: SW tab-activation handler
+  - step: stop
+    action: User clicks Stop (single user gesture).
+    output: One continuous mp4 (webm fallback) downloads; filename broshow-YYYY-MM-DD-HHmmss.ext
+    emotion: satisfied / confident
+    shared_artifact: output_file
+
+error_paths:
+  - at: switch-tab
+    failure: Capture cannot re-acquire on the new tab (e.g. user-gesture constraint).
+    recovery: >
+      Degrade predictably — either keep recording the last valid tab and surface a
+      visible notice, OR pause-and-mark a gap. Behavior decided by SPIKE (slice-00).
+    must_not: Silently record the wrong tab or silently drop footage with no indicator.
+  - at: switch-tab
+    failure: User switches to a sensitive tab they did not intend to record.
+    recovery: >
+      Visible "now following: <tab>" indicator gives the user a beat to switch back
+      or stop. v1 relies on the indicator; explicit per-tab exclusion is out of scope.
+    must_not: Capture a tab with no visible signal that it is being recorded.
+  - at: switch-tab
+    failure: User switches to a different browser window.
+    recovery: >
+      v1 scope is the originating window only. Out-of-window activation pauses follow
+      (keeps last source or marks gap) rather than chasing across windows.
+    must_not: Expand recording scope to windows the user never armed.
+
+shared_artifacts_registry:
+  recording_mode: popup control state (idle|single|follow)
+  recording_session: service-worker RecordingState discriminated union
+  active_capture_source: SW tab-activation handler — the currently-captured tabId
+  output_file: offscreen/mp4 muxer result (dataUrl) → downloads
