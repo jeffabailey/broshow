@@ -20,13 +20,48 @@ export type RecordingState =
 // popup's start-recording message carries the runtime witness of the
 // capability probe: 'chromium-offscreen' (chrome.offscreen + tabCapture)
 // or 'firefox-display-media' (navigator.mediaDevices.getDisplayMedia).
-export type RecordingPath = 'chromium-offscreen' | 'firefox-display-media';
+//
+// record-all-tabs (R1-cropped) widens this union with 'window-cropped' (ADDITIVE).
+// Per docs/feature/record-all-tabs/design/data-models.md §2, 'window-cropped' is a
+// pipeline/mode discriminant that is TARGET-BLIND -- both Chromium and Firefox
+// resolve it to the record-page recorder. targetForPath keeps mapping only the
+// two target-bearing paths (no new platform branch).
+export type RecordingPath =
+  | 'chromium-offscreen'
+  | 'firefox-display-media'
+  | 'window-cropped';
+
+// --- Recording mode (popup user-facing selector) ---------------------------
+// record-all-tabs (R1-cropped), data-models.md §3. Distinct from RecordingPath
+// (wire) so UI vocabulary and wire format evolve independently. Default is
+// 'single-tab' -- existing behavior byte-for-byte unchanged (AC1.1).
+export type RecordingMode =
+  | 'single-tab'
+  | 'desktop-screen'
+  | 'window-cropped';
+
+// --- Crop rectangle (stream coordinates) -----------------------------------
+// record-all-tabs (R1-cropped), data-models.md §4. Coordinates are in STREAM
+// pixel space (the source window stream's intrinsic size), NOT preview CSS px.
+// The pure crop-geometry.ts owns the preview->stream mapping and the clamping
+// invariants (0<=x, 0<=y, x+w<=streamWidth, y+h<=streamHeight, w>0, h>0).
+export type CropRect = {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+};
 
 // --- Popup -> Service Worker messages -------------------------------------
 
 export type PopupToSW =
   | { readonly type: 'start-recording'; readonly path: 'chromium-offscreen'; readonly streamId: string }
   | { readonly type: 'start-recording'; readonly path: 'firefox-display-media' }
+  // record-all-tabs (R1-cropped), data-models.md §5: no streamId, no CropRect on
+  // the wire -- the CropRect is consumed locally in the record page. The SW only
+  // needs to know a window-cropped recording is starting (flip state, badge,
+  // "Recording window region" indicator).
+  | { readonly type: 'start-recording'; readonly path: 'window-cropped' }
   | { readonly type: 'stop-recording' }
   | { readonly type: 'get-state' };
 
