@@ -330,6 +330,36 @@ describe('background wiring', () => {
     });
   });
 
+  it('handles window-cropped start: flips idle->recording + REC badge, but creates NO offscreen document', async () => {
+    // record-all-tabs (R1-cropped), 02-01: the window-cropped start message
+    // carries the mode discriminant (no streamId). The record page owns the
+    // recorder; the SW must NOT mint an offscreen document for this path. It
+    // only flips state and sets the badge -- same RecordingState graph, no new
+    // node, no tabs.onActivated handler.
+    const apis = createMockChromeAPIs();
+    apis.getActiveTab.mockResolvedValue({ id: 42 });
+    apis.now.mockReturnValue(5000);
+
+    const { createMessageHandler } = await import('../../src/background-logic');
+    const handleMessage = createMessageHandler(apis);
+
+    const response = await handleMessage({ type: 'start-recording', path: 'window-cropped' });
+
+    // Observable: flips idle -> recording (same RecordingState shape).
+    expect(response).toEqual({
+      type: 'state-update',
+      state: { status: 'recording', tabId: 42, startTime: 5000 },
+    });
+
+    // Observable: REC badge set.
+    expect(apis.setBadge).toHaveBeenCalledWith('REC', expect.any(String));
+
+    // Observable: NO offscreen document minted on the window-cropped path.
+    // (Give any async offscreen-creation a chance to fire, then assert it did not.)
+    await Promise.resolve();
+    expect(apis.createOffscreenDocument).not.toHaveBeenCalled();
+  });
+
   it('handles start-recording error when no active tab', async () => {
     const apis = createMockChromeAPIs();
     apis.getActiveTab.mockResolvedValue(null);

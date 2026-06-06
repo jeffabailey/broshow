@@ -9,6 +9,7 @@
 
 import type {
   RecordingState,
+  RecordingPath,
   SWToPopup,
   SWToOffscreen,
   OffscreenToSW,
@@ -112,12 +113,25 @@ export const handleGetState = (state: RecordingState): SWToPopup => ({
   state,
 });
 
-/** Handle a start-recording request. Pure state transition. */
+/**
+ * Handle a start-recording request. Pure state transition.
+ *
+ * The `path` discriminant is carried through (record-all-tabs R1-cropped,
+ * data-models.md §5) so the SW stays target-blind while distinguishing which
+ * pipeline owns the recorder:
+ *   - 'chromium-offscreen' (and any target-bearing path): the SW orchestrates an
+ *     offscreen document, so it emits an `offscreen-start` message.
+ *   - 'window-cropped': the RECORD PAGE owns the recorder (it acquired the
+ *     stream in its own gesture). The SW only flips state + badge; it mints NO
+ *     offscreen document. Same RecordingState graph -- no new node, no
+ *     tabs.onActivated handler.
+ */
 export const handleStartRecording = (
   state: RecordingState,
   tabId: number,
   streamId: string,
   startTime: number,
+  path: RecordingPath = 'chromium-offscreen',
 ): StartResult => {
   if (state.status !== 'idle') {
     return {
@@ -133,10 +147,15 @@ export const handleStartRecording = (
     startTime,
   };
 
+  // The window-cropped pipeline runs its recorder in the record page; the SW
+  // must not orchestrate an offscreen document for it.
+  const offscreenMessage: SWToOffscreen | null =
+    path === 'window-cropped' ? null : { type: 'offscreen-start', streamId };
+
   return {
     newState,
     response: { type: 'state-update', state: newState },
-    offscreenMessage: { type: 'offscreen-start', streamId },
+    offscreenMessage,
   };
 };
 
@@ -243,8 +262,13 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
         // contract.
         const streamId = 'streamId' in message ? message.streamId : '';
 
+        // Carry the path discriminant so the window-cropped pipeline (recorder
+        // owned by the record page) flips state + badge WITHOUT the SW minting
+        // an offscreen document. Target-bearing paths keep the offscreen flow.
+        const path: RecordingPath = 'path' in message ? message.path : 'chromium-offscreen';
+
         // Pure: compute state transition
-        const result = handleStartRecording(state, tab.id, streamId, apis.now());
+        const result = handleStartRecording(state, tab.id, streamId, apis.now(), path);
         state = result.newState;
 
         // Effect: update badge to reflect new recording state

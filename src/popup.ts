@@ -52,6 +52,31 @@ const readSelectedMode = (): RecordingMode => {
 /** Resolve the user's chosen mode to its wire-level path via the pure seam. */
 const selectedPath = (): RecordingPath => modeToPath(readSelectedMode());
 
+/**
+ * Shipped launcher path: open record.html in its own browser window so the
+ * record page carries the user gesture that getDisplayMedia requires. The popup
+ * origin (chrome-extension://... / moz-extension://...) is not allowed to call
+ * getDisplayMedia, so the record page is the gesture + preview owner. This is
+ * the SAME launcher the Firefox path uses (ADR-003 Option B); the cropped-window
+ * mode reuses it (component-boundaries.md §5).
+ */
+const launchRecordPageWindow = (statusEl: HTMLParagraphElement): Promise<void> =>
+  chrome.windows
+    .create({
+      url: chrome.runtime.getURL('record.html'),
+      type: 'popup',
+      width: 520,
+      height: 280,
+    })
+    .then(() => {
+      // Closing the toolbar popup gives the new window full focus.
+      window.close();
+    })
+    .catch((e: unknown) => {
+      const err = e as Error;
+      statusEl.textContent = `Failed to open recorder: ${err?.message ?? 'unknown error'}`;
+    });
+
 const setupFirefoxPopupRecorder = (
   buttonEl: HTMLButtonElement,
   statusEl: HTMLParagraphElement,
@@ -65,21 +90,7 @@ const setupFirefoxPopupRecorder = (
   statusEl.textContent =
     'Firefox requires a tab context for recording. Click to open the recorder.';
   buttonEl.addEventListener('click', () => {
-    chrome.windows
-      .create({
-        url: chrome.runtime.getURL('record.html'),
-        type: 'popup',
-        width: 520,
-        height: 280,
-      })
-      .then(() => {
-        // Closing the toolbar popup gives the new window full focus.
-        window.close();
-      })
-      .catch((e: unknown) => {
-        const err = e as Error;
-        statusEl.textContent = `Failed to open recorder: ${err?.message ?? 'unknown error'}`;
-      });
+    void launchRecordPageWindow(statusEl);
   });
 };
 
@@ -119,6 +130,39 @@ const onMessage = (handler: (message: SWToPopup) => void) => {
   });
 };
 
+// --- Window-cropped mode routing (record-all-tabs, ADR-012) ----------------
+// When the user selects "Record all tabs (window, cropped)" and clicks Start,
+// the popup must route to the record page rather than the single-tab pipeline.
+// The record page owns the getDisplayMedia(window) gesture + crop preview; the
+// popup origin NEVER calls getDisplayMedia. This routing is TARGET-BLIND -- it
+// fires whenever window-cropped is the selected mode, regardless of the
+// capability probe's target (component-boundaries.md §4, data-models.md §5).
+//
+// Registered with `capture: true` so it runs before initializePopup's bubble-
+// phase click handler; on the window-cropped path it stops that handler and the
+// single-tab/desktop pipelines stay byte-for-byte unchanged (AC1.1).
+
+const setupWindowCroppedRouting = (buttonEl: HTMLButtonElement): void => {
+  buttonEl.addEventListener(
+    'click',
+    (event) => {
+      if (readSelectedMode() !== 'window-cropped') return;
+
+      // Window-cropped is selected: take over from the single-tab handler.
+      event.stopImmediatePropagation();
+
+      // Tell the SW a window-cropped recording is starting (flip state + REC
+      // badge). No streamId, no CropRect on the wire (data-models.md §5).
+      void sendMessage({ type: 'start-recording', path: 'window-cropped' });
+
+      // Open the record page (gesture + preview owner). The popup origin never
+      // calls getDisplayMedia -- the record page does, in its own gesture.
+      void launchRecordPageWindow(status);
+    },
+    { capture: true },
+  );
+};
+
 // --- Path dispatch ---------------------------------------------------------
 
 const capability = checkRecordingCapability();
@@ -126,6 +170,9 @@ const capability = checkRecordingCapability();
 if (capability.supported && capability.path === 'firefox-display-media') {
   setupFirefoxPopupRecorder(button, status);
 } else {
+  // Wire the window-cropped interceptor first so it runs before the single-tab
+  // click handler that initializePopup registers (capture vs bubble phase).
+  setupWindowCroppedRouting(button);
   initializePopup(
     button,
     status,
