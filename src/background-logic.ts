@@ -218,6 +218,14 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
   let state: RecordingState = createInitialState();
   let processingTimeoutId: number | null = null;
 
+  // Single seam for the recurring badge effect: project the state to its badge
+  // (pure badgeFor) and push it through the chrome API. Collapses the repeated
+  // `const b = badgeFor(state); apis.setBadge(b.text, b.color)` pairs below.
+  const applyBadge = (current: RecordingState): void => {
+    const badge = badgeFor(current);
+    apis.setBadge(badge.text, badge.color);
+  };
+
   const clearProcessingTimeout = () => {
     if (processingTimeoutId !== null) {
       apis.clearTimeout(processingTimeoutId);
@@ -231,7 +239,7 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
       processingTimeoutId = null;
       if (state.status !== 'processing') return;
       state = { status: 'idle' };
-      apis.setBadge(badgeFor(state).text, badgeFor(state).color);
+      applyBadge(state);
       await apis.closeOffscreenDocument();
       apis.broadcastError(
         'Recording timed out: the recorder did not finish within the expected time. This commonly happens on browsers that do not support the offscreen API (e.g., Firefox).',
@@ -272,8 +280,7 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
         state = result.newState;
 
         // Effect: update badge to reflect new recording state
-        const badge = badgeFor(state);
-        apis.setBadge(badge.text, badge.color);
+        applyBadge(state);
 
         // Effect: create offscreen document with streamId in URL.
         // The offscreen document self-starts recording on load, avoiding
@@ -293,8 +300,7 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
         state = result.newState;
 
         // Effect: update badge to reflect new processing/idle state
-        const badge = badgeFor(state);
-        apis.setBadge(badge.text, badge.color);
+        applyBadge(state);
 
         // Effect: start timeout to recover if offscreen never responds
         if (state.status === 'processing') {
@@ -329,8 +335,7 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
         state = result.newState;
 
         // Effect: clear badge now that recording is done
-        const resultBadge = badgeFor(state);
-        apis.setBadge(resultBadge.text, resultBadge.color);
+        applyBadge(state);
 
         // Effect: get recording data (from message fallback or storage), download, clean up
         const dataUrl = message.dataUrl ?? await apis.getRecordingData();
@@ -373,8 +378,7 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
           state = fallbackResult.newState;
 
           // Effect: clear badge on transition to idle via fallback path
-          const fallbackBadge = badgeFor(state);
-          apis.setBadge(fallbackBadge.text, fallbackBadge.color);
+          applyBadge(state);
 
           await apis.downloadFile(fallbackDataUrl, formatRecordingFilename(new Date(apis.now()), 'webm'));
           await apis.clearRecordingData();
@@ -389,8 +393,7 @@ export const createMessageHandler = (apis: ChromeAPIs) => {
         state = result.newState;
 
         // Effect: clear badge on transition to idle via error path
-        const errorBadge = badgeFor(state);
-        apis.setBadge(errorBadge.text, errorBadge.color);
+        applyBadge(state);
 
         // Effect: close offscreen document
         await apis.closeOffscreenDocument();
