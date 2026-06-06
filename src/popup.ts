@@ -18,10 +18,11 @@
 import {
   detectRecordingCapability,
   initializePopup,
+  modeToPath,
   type CapabilityCheckResult,
   type ProbeGlobals,
 } from './popup-logic';
-import type { PopupToSW, SWToPopup } from './types';
+import type { PopupToSW, RecordingMode, RecordingPath, SWToPopup } from './types';
 
 const checkRecordingCapability = (): CapabilityCheckResult =>
   detectRecordingCapability(globalThis as ProbeGlobals);
@@ -29,6 +30,27 @@ const checkRecordingCapability = (): CapabilityCheckResult =>
 const button = document.getElementById('action-button') as HTMLButtonElement;
 const status = document.getElementById('status') as HTMLParagraphElement;
 const fallbackNotice = document.getElementById('fallback-notice') as HTMLParagraphElement;
+
+// --- Mode selector (record-all-tabs, ADR-012) ------------------------------
+// The popup offers a top-level recording mode. Default selection is
+// 'single-tab' so the existing single-tab pipeline stays byte-for-byte
+// unchanged until the user opts in (AC1.1). This reader is the edge adapter;
+// the user-facing RecordingMode is routed to a wire-level RecordingPath by the
+// already-tested pure seam modeToPath (popup-logic.ts, 01-02).
+
+const isRecordingMode = (value: string): value is RecordingMode =>
+  value === 'single-tab' || value === 'desktop-screen' || value === 'window-cropped';
+
+const readSelectedMode = (): RecordingMode => {
+  const checked = document.querySelector<HTMLInputElement>(
+    'input[name="recording-mode"]:checked',
+  );
+  const value = checked?.value ?? 'single-tab';
+  return isRecordingMode(value) ? value : 'single-tab';
+};
+
+/** Resolve the user's chosen mode to its wire-level path via the pure seam. */
+const selectedPath = (): RecordingPath => modeToPath(readSelectedMode());
 
 const setupFirefoxPopupRecorder = (
   buttonEl: HTMLButtonElement,
@@ -74,6 +96,13 @@ const getTargetTabId = async (): Promise<number> => {
 };
 
 const getStreamId = async (): Promise<string> => {
+  // The window-cropped mode does not capture a single tab; its stream is
+  // acquired in the record page (no popup-side streamId). For every other mode
+  // the single-tab pipeline is byte-for-byte unchanged (AC1.1): acquire the
+  // tabCapture streamId in the popup's user-gesture window.
+  if (selectedPath() === 'window-cropped') {
+    return '';
+  }
   try {
     const targetTabId = await getTargetTabId();
     return await chrome.tabCapture.getMediaStreamId({ targetTabId });

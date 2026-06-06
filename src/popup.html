@@ -10,6 +10,17 @@
   <div class="popup-container">
     <h1>BroShow</h1>
     <p id="status" class="status-text">Loading...</p>
+    <fieldset id="mode-selector" class="mode-selector" data-testid="mode-selector">
+      <legend class="mode-legend">Recording mode</legend>
+      <label class="mode-option">
+        <input type="radio" name="recording-mode" value="single-tab" checked>
+        <span>Record this tab</span>
+      </label>
+      <label class="mode-option">
+        <input type="radio" name="recording-mode" value="window-cropped">
+        <span>Record all tabs (window, cropped)</span>
+      </label>
+    </fieldset>
     <button id="action-button" disabled>Loading...</button>
     <p id="fallback-notice" data-testid="fallback-notice" class="fallback-notice" hidden></p>
   </div>
