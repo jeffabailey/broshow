@@ -1,0 +1,56 @@
+{
+  "roadmap": {
+    "project_id": "fix-window-cropped-share-greyed",
+    "created_at": "2026-06-07T00:00:00Z",
+    "total_steps": 2,
+    "phases": 1,
+    "scope": "bugfix",
+    "rca": "docs/analysis/root-cause-analysis-share-button-greyed-window-cropped.md"
+  },
+  "phases": [
+    {
+      "id": "01",
+      "name": "Wire window-cropped capture and degrade audio gracefully",
+      "description": "Fix the greyed Share button: (B) wire the window-cropped mode so the record page actually runs startWindowCroppedRecording, and (A) retry without audio when getDisplayMedia rejects so a surface that cannot supply audio no longer leaves Share disabled.",
+      "dependencies": [],
+      "steps": [
+        {
+          "id": "01-01",
+          "name": "No-audio retry fallback for getDisplayMedia (RC-A) + regression test",
+          "description": "In src/record.ts, when getDisplayMedia with audio rejects (Share disabled / NotAllowedError-style on a surface that cannot supply audio), retry the SAME displaySurface with audio:false before surfacing the cancel notice. Apply to (1) startWindowCroppedRecording's WINDOW_CROPPED_CONSTRAINTS path and (2) the live tab-path fallback chain at record.ts ~326-333. Upholds Decision B: audio is kept when available, dropped only when unsupplyable. Firefox/single-tab byte-for-byte unchanged. The injectable WindowCroppedRecordingDeps.getDisplayMedia is the regression-test seam.",
+          "criteria": "Given a fake getDisplayMedia that REJECTS the audio:true call then RESOLVES a no-audio call, when startWindowCroppedRecording runs, then it returns a started session, getDisplayMedia is called twice, the second call carries audio:false (same displaySurface:'window'), and onStateChange('recording') fires. Given a fake getDisplayMedia that rejects BOTH calls, then it returns null, a visible notice is set, onStateChange('idle') fires, and no session/download is created. The existing audio-success path (single call, audio:true) is unchanged. npm run build green; full vitest suite green with zero regressions.",
+          "estimated_time": "45min",
+          "dependencies": [],
+          "files_to_modify": [
+            "src/record.ts",
+            "tests/unit/record-all-tabs-acquire-constraints.test.ts"
+          ],
+          "test_file": "tests/unit/record-all-tabs-acquire-constraints.test.ts",
+          "scenario_name": "getDisplayMedia degrades to audio:false when the audio request is unsatisfiable, so Share is no longer greyed; both-reject still cancels cleanly (RC-A regression)"
+        },
+        {
+          "id": "01-02",
+          "name": "Wire ?mode=window-cropped so the record page runs the window-cropped path (RC-B) + routing test",
+          "description": "Fix the dead-code root cause: the popup opens a bare record.html, so bootstrapRecordPage always runs the tab path (startRecording) and never startWindowCroppedRecording. (1) src/popup.ts: append ?mode=window-cropped to the record.html URL when the selected mode is window-cropped. (2) src/record.ts bootstrapRecordPage: read the mode from location, and when window-cropped, wire the action button to startWindowCroppedRecording with composeFromGranted built from the live preview <video> + compositor <canvas> + crop selection (composeFromPreview), instead of startRecording. Single-tab/Firefox routing (no mode param) unchanged. Provide a pure/headless routing seam so the decision is testable without the real picker.",
+          "criteria": "Given the popup with window-cropped selected, when it opens the record page, then the record.html URL carries mode=window-cropped. Given bootstrapRecordPage on a page whose mode is window-cropped with an injected getDisplayMedia, when the action button is clicked, then startWindowCroppedRecording is invoked (getDisplayMedia called with displaySurface:'window') and NOT the tab-path startRecording. Given no mode param (single-tab/Firefox), then the existing startRecording path runs unchanged. The full crop-and-record pixel flow remains @human-gate dogfood. npm run build green; full vitest suite green with zero regressions.",
+          "estimated_time": "75min",
+          "dependencies": [
+            "01-01"
+          ],
+          "files_to_modify": [
+            "src/popup.ts",
+            "src/record.ts",
+            "tests/unit/record-all-tabs-mode-routing.test.ts"
+          ],
+          "test_file": "tests/unit/record-all-tabs-mode-routing.test.ts",
+          "scenario_name": "popup passes mode=window-cropped and the record page routes the action button to startWindowCroppedRecording (not the tab path) under that mode (RC-B regression)"
+        }
+      ]
+    }
+  ],
+  "validation": {
+    "status": "approved",
+    "reviewed_by": "orchestrator (bugfix minimal roadmap, RCA-driven)",
+    "review_note": "2-step bugfix per /nw-bugfix Phase 3; RC-A (audio degrade) then RC-B (mode wiring). User approved both parts."
+  }
+}
