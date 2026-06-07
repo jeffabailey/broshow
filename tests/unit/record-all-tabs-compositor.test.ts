@@ -230,7 +230,10 @@ describe('record.ts startWindowCroppedRecording: cancel -> notice (AC2.4)', () =
       onStateChange: vi.fn(),
     });
 
-    expect(getDisplayMedia).toHaveBeenCalledTimes(1);
+    // RC-A: a rejected audio:true request now triggers a no-audio retry, so a
+    // reject-all mock is invoked twice. This test pins the FIRST (primary) request
+    // shape -- the gesture asks for the window surface WITH audio. (The retry's
+    // audio:false shape is pinned in record-all-tabs-acquire-constraints.test.ts.)
     const constraints = getDisplayMedia.mock.calls[0]![0] as MediaStreamConstraints;
     const video = constraints.video as MediaTrackConstraints;
     expect(video.displaySurface).toBe('window');

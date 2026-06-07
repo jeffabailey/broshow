@@ -83,10 +83,26 @@ const WINDOW_CROPPED_CONSTRAINTS: MediaStreamConstraints = {
 };
 
 /**
- * Acquire the window stream in the gesture and start a cropped recording. On a
- * getDisplayMedia rejection, surface a visible notice and return to idle without
+ * Derive the no-audio retry constraint from an audio-bearing constraint, keeping
+ * the SAME video surface and dropping ONLY audio. PURE -- this is the RC-A
+ * degrade: a surface that cannot supply audio leaves the picker's Share button
+ * disabled (or rejects the request), so we re-request the identical surface with
+ * audio:false rather than surfacing a cancel notice (Decision B: audio is kept
+ * when available, dropped only when it cannot be supplied).
+ */
+const withoutAudio = (constraints: MediaStreamConstraints): MediaStreamConstraints => ({
+  ...constraints,
+  audio: false,
+});
+
+/**
+ * Acquire the window stream in the gesture and start a cropped recording. The
+ * audio:true request is tried first; if it rejects (a window surface that cannot
+ * supply audio leaves Share greyed / rejects), the SAME surface is retried with
+ * audio:false BEFORE any cancel notice (RC-A degrade). Only if BOTH requests
+ * reject is a visible notice surfaced and the page returned to idle without
  * downloading (AC2.4). Returns the started recorder session on success, or null
- * if acquisition was rejected.
+ * if acquisition was rejected on both attempts.
  */
 export const startWindowCroppedRecording = async (
   deps: WindowCroppedRecordingDeps,
@@ -94,14 +110,22 @@ export const startWindowCroppedRecording = async (
   let granted: MediaStream;
   try {
     granted = await deps.getDisplayMedia(WINDOW_CROPPED_CONSTRAINTS);
-  } catch (error) {
-    // Cancelled picker / NotAllowedError: visible notice, idle, NO download.
-    const e = error as Error;
-    deps.setStatus(
-      `Screen-share cancelled: ${e?.name ?? 'UnknownError'} — ${e?.message ?? 'no message'}`,
-    );
-    deps.onStateChange('idle');
-    return null;
+  } catch (audioError) {
+    // The audio:true request failed -- a surface that cannot supply audio leaves
+    // Share disabled / rejects. RC-A: retry the SAME window surface with no audio
+    // BEFORE surfacing any cancel notice.
+    try {
+      granted = await deps.getDisplayMedia(withoutAudio(WINDOW_CROPPED_CONSTRAINTS));
+    } catch (noAudioError) {
+      // Both attempts rejected: genuinely cancelled / unavailable. Visible
+      // notice, idle, NO download (AC2.4).
+      const e = noAudioError as Error;
+      deps.setStatus(
+        `Screen-share cancelled: ${e?.name ?? 'UnknownError'} — ${e?.message ?? 'no message'}`,
+      );
+      deps.onStateChange('idle');
+      return null;
+    }
   }
 
   // Success path: crop the granted window stream (audio passes through) and hand
@@ -330,7 +354,17 @@ const startRecording = async (): Promise<void> => {
     } catch (browserSurfaceError) {
       const e = browserSurfaceError as Error;
       console.log('[record] browser-surface request failed, falling back:', e?.name, '|', e?.message);
-      displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      try {
+        displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      } catch (anySurfaceAudioError) {
+        // RC-A degrade for the live path: a surface that cannot supply audio
+        // leaves the picker's Share button greyed / rejects the audio:true
+        // request. Retry once with audio:false so the live path also degrades
+        // gracefully instead of dead-ending on a greyed Share button.
+        const audioErr = anySurfaceAudioError as Error;
+        console.log('[record] audio request failed, retrying without audio:', audioErr?.name, '|', audioErr?.message);
+        displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      }
     }
     console.log(
       '[record] getDisplayMedia: video=', displayStream.getVideoTracks().length,
