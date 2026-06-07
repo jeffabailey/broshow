@@ -60,10 +60,13 @@ const selectedPath = (): RecordingPath => modeToPath(readSelectedMode());
  * the SAME launcher the Firefox path uses (ADR-003 Option B); the cropped-window
  * mode reuses it (component-boundaries.md §5).
  */
-const launchRecordPageWindow = (statusEl: HTMLParagraphElement): Promise<void> =>
+const launchRecordPageWindow = (
+  statusEl: HTMLParagraphElement,
+  recordPagePath = 'record.html',
+): Promise<void> =>
   chrome.windows
     .create({
-      url: chrome.runtime.getURL('record.html'),
+      url: chrome.runtime.getURL(recordPagePath),
       type: 'popup',
       width: 520,
       height: 280,
@@ -155,9 +158,12 @@ const setupWindowCroppedRouting = (buttonEl: HTMLButtonElement): void => {
       // badge). No streamId, no CropRect on the wire (data-models.md §5).
       void sendMessage({ type: 'start-recording', path: 'window-cropped' });
 
-      // Open the record page (gesture + preview owner). The popup origin never
-      // calls getDisplayMedia -- the record page does, in its own gesture.
-      void launchRecordPageWindow(status);
+      // Open the record page (gesture + preview owner) WITH the window-cropped
+      // mode flag so bootstrapRecordPage routes the action to the window-capture
+      // path (startWindowCroppedRecording), not the single-tab path (RC-B). The
+      // popup origin never calls getDisplayMedia -- the record page does, in its
+      // own gesture. Single-tab/Firefox open record.html with NO flag (unchanged).
+      void launchRecordPageWindow(status, 'record.html?mode=window-cropped');
     },
     { capture: true },
   );

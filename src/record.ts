@@ -43,6 +43,55 @@ export const shouldShowMicAudioOptions = (
 type State = 'idle' | 'recording' | 'processing' | 'done';
 
 // ---------------------------------------------------------------------------
+// Record-page mode routing (RC-B) -- pure parse + injectable action seam
+// ---------------------------------------------------------------------------
+// The record page hosts TWO capture paths. Which one runs is decided by a single
+// query flag the popup appends when it opens the page: `?mode=window-cropped`
+// for the cropped-window mode, NO flag for the single-tab / Firefox tab path.
+// Before RC-B the popup opened a bare record.html with no flag, so the window
+// path (startWindowCroppedRecording) was DEAD CODE -- bootstrap always wired the
+// tab path. recordPageModeFromSearch is the PURE/total seam that turns
+// location.search into the routing decision so the choice is unit-testable
+// without the DOM or the real picker.
+
+/** The two record-page capture modes the query flag selects between. */
+export type RecordPageMode = 'window-cropped' | 'default';
+
+/**
+ * Parse the record page's mode from its `location.search`. Total: only the exact
+ * `mode=window-cropped` flag selects the window-cropped path; an empty search, a
+ * missing/empty mode, or any other mode value falls back to 'default' (the
+ * unchanged single-tab / Firefox tab path). PURE -- no DOM, no chrome.
+ */
+export const recordPageModeFromSearch = (search: string): RecordPageMode =>
+  new URLSearchParams(search).get('mode') === 'window-cropped'
+    ? 'window-cropped'
+    : 'default';
+
+/** Dependencies the record-page action routes between (RC-B). */
+export interface RecordPageActionDeps extends WindowCroppedRecordingDeps {
+  /** The UNCHANGED single-tab / Firefox tab recorder (record.ts startRecording). */
+  readonly startTabRecording: () => Promise<void>;
+}
+
+/**
+ * Build the record page's idle->start action for a given mode. Under
+ * 'window-cropped' the action drives startWindowCroppedRecording (the window
+ * getDisplayMedia gesture + crop); under 'default' it drives the injected tab
+ * recorder unchanged. This is the seam that makes the routing decision testable
+ * headlessly with a fake getDisplayMedia -- the real picker stays @human-gate.
+ */
+export const createRecordPageAction = (
+  mode: RecordPageMode,
+  deps: RecordPageActionDeps,
+): (() => Promise<unknown>) => {
+  if (mode === 'window-cropped') {
+    return () => startWindowCroppedRecording(deps);
+  }
+  return () => deps.startTabRecording();
+};
+
+// ---------------------------------------------------------------------------
 // Window-cropped acquisition + error path (AC1.2 / AC2.4) -- injectable seam
 // ---------------------------------------------------------------------------
 // The cropped-window mode requests the WINDOW surface in the gesture, renders it
@@ -508,9 +557,32 @@ const bootstrapRecordPage = (): void => {
     audioOptionsEl.hidden = !shouldShowMicAudioOptions(capability);
   }
 
+  // Route on the mode the popup flagged via ?mode= (RC-B). With no flag this is
+  // the unchanged single-tab / Firefox tab path. With mode=window-cropped the
+  // action runs startWindowCroppedRecording -- the window getDisplayMedia gesture
+  // + live-preview crop -- so the cropped-window path is no longer dead code.
+  const mode = recordPageModeFromSearch(
+    typeof location === 'undefined' ? '' : location.search,
+  );
+  const action = createRecordPageAction(mode, {
+    getDisplayMedia: (constraints) => navigator.mediaDevices.getDisplayMedia(constraints),
+    createRecordingSession: createMediaRecorderSession,
+    download: (args) => chrome.downloads.download(args),
+    setStatus: (text) => { status.textContent = text; },
+    onStateChange: (next) => {
+      state = next;
+      renderButton();
+    },
+    // Live success-path compositor wiring (the preview <video> + compositor
+    // <canvas> + the user-drawn crop rect). The real crop draw + window pixels
+    // are the @human-gate dogfood step; this only supplies the composition root.
+    composeFromGranted: buildLiveComposeFromGranted(),
+    startTabRecording: startRecording,
+  });
+
   button.addEventListener('click', () => {
     if (state === 'idle') {
-      void startRecording();
+      void action();
     } else if (state === 'recording') {
       void stopRecording();
     }
@@ -518,6 +590,36 @@ const bootstrapRecordPage = (): void => {
 
   status.textContent = 'Ready';
   renderButton();
+};
+
+/**
+ * Assemble the live `composeFromGranted` from the record page's crop elements:
+ * the preview <video> sink, the compositor <canvas>, and the user-drawn drag
+ * rect captured over the overlay (createCropSelection). When the crop elements
+ * are absent (e.g. a reused single-tab record page) it returns undefined so
+ * startWindowCroppedRecording records the granted window stream uncropped. The
+ * crop pixels themselves are exercised at the @human-gate dogfood -- this wiring
+ * carries no geometry of its own (it delegates to composeFromPreview).
+ */
+const buildLiveComposeFromGranted = ():
+  | ((granted: MediaStream) => MediaStream)
+  | undefined => {
+  const video = document.getElementById('crop-preview') as HTMLVideoElement | null;
+  const canvas = document.getElementById('crop-canvas') as HTMLCanvasElement | null;
+  const overlay = document.getElementById('crop-overlay');
+  const stage = document.getElementById('crop-stage');
+  if (video === null || canvas === null || overlay === null) return undefined;
+
+  // Reveal the live preview so the user can drag a crop box over the window.
+  if (stage !== null) stage.style.display = 'block';
+
+  // Capture the latest user-drawn drag rect (preview CSS px). Defaults to a
+  // zero-rect until the user drags; crop-geometry clamps/normalizes downstream.
+  let dragRect: DragRectPreviewPx = { x: 0, y: 0, w: 0, h: 0 };
+  createCropSelection(overlay, (rect) => { dragRect = rect; });
+
+  return (granted: MediaStream): MediaStream =>
+    composeFromPreview(video, canvas, dragRect)(granted);
 };
 
 bootstrapRecordPage();
