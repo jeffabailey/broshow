@@ -1,35 +1,55 @@
 // ---------------------------------------------------------------------------
-// Unit seam — record page mode routing (RC-B), DELIVER 01-02
+// Unit seam — record page surface routing + shared stop/download lifecycle
+// (simplify-window-record-no-crop), DELIVER 01-01
 // ---------------------------------------------------------------------------
-// RC-B fix: the window-cropped capture path was DEAD CODE. The popup opened a
-// bare record.html with no mode flag, so bootstrapRecordPage always wired the
-// action button to the TAB path (startRecording) and NEVER reached
-// startWindowCroppedRecording. The fix routes on a ?mode= query param.
+// SIMPLIFICATION: "Record all tabs (window, cropped)" is now "Record all tabs
+// (window)" — the WHOLE window is recorded with NO cropping. The crop machinery
+// (crop-geometry, crop-compositor, the live preview/compositor wiring, the
+// drag-to-select, startWindowCroppedRecording) is DELETED. Both the window mode
+// and the single-tab/Firefox mode now run the SAME proven record/stop/download
+// lifecycle (the getDisplayMedia path that already works for Firefox). The only
+// difference between them is the requested displaySurface.
 //
-// Two seams are pinned here, both headless / no real picker (the real
-// crop+record pixel flow stays @human-gate -- Chrome 148 blocks headless
-// getDisplayMedia):
+// The earlier bug: window mode used a separate startWindowCroppedRecording that
+// returned a session the bootstrap DISCARDED, and Stop was hardwired to the tab
+// path — so window-mode Stop never fired the session's stop+download. The fix is
+// reuse: ONE lifecycle, ONE stop, surface chosen by mode.
 //
-//   1. recordPageModeFromSearch(search) -- PURE/total parse of location.search
-//      into 'window-cropped' | 'default'. The routing decision lives here so it
-//      is unit-testable without the DOM or the real picker.
+// Two seams are pinned here, both headless / no real picker (real whole-window
+// capture stays @human-gate — Chrome 148 blocks headless getDisplayMedia):
 //
-//   2. The action routing itself -- driven through the injectable seam
-//      createRecordPageAction(mode, deps): under 'window-cropped' an action
-//      invokes startWindowCroppedRecording (getDisplayMedia called with
-//      displaySurface:'window'); under 'default' it invokes the tab path
-//      (the injected startTabRecording), NEVER getDisplayMedia(window).
+//   1. displayMediaConstraintsForMode(mode) — PURE: window mode →
+//      displaySurface:'window'; default mode → displaySurface:'browser'. The
+//      surface choice lives in a pure seam so it is unit-testable without the DOM
+//      or the real picker.
+//
+//   2. createRecordLifecycle(mode, deps) — the SHARED start/stop/download
+//      lifecycle, driven through injected deps. Drives start→stop for BOTH modes
+//      and asserts the SAME stop fires the session's stop + the download (no
+//      discarded session, no tab-only-stop). This proves the unwired-Stop bug is
+//      gone via reuse.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi } from 'vitest';
-import { recordPageModeFromSearch, createRecordPageAction } from '../../src/record';
+import {
+  recordPageModeFromSearch,
+  displayMediaConstraintsForMode,
+  createRecordLifecycle,
+  type RecordPageMode,
+} from '../../src/record';
 
-const makeFakeStream = (): MediaStream => {
+const makeFakeStream = (opts: { audio: boolean } = { audio: true }): MediaStream => {
+  const audioTracks = opts.audio
+    ? [{ kind: 'audio', id: 'audio-1', stop: vi.fn() } as unknown as MediaStreamTrack]
+    : [];
   const videoTracks = [
-    { kind: 'video', id: 'src-video', stop: vi.fn() } as unknown as MediaStreamTrack,
-  ];
-  const audioTracks = [
-    { kind: 'audio', id: 'audio-1', stop: vi.fn() } as unknown as MediaStreamTrack,
+    {
+      kind: 'video',
+      id: 'src-video',
+      stop: vi.fn(),
+      getSettings: () => ({ displaySurface: 'window' }),
+      addEventListener: vi.fn(),
+    } as unknown as MediaStreamTrack,
   ];
   return {
     getAudioTracks: () => audioTracks,
@@ -41,18 +61,35 @@ const makeFakeStream = (): MediaStream => {
 const displaySurfaceOf = (constraints: MediaStreamConstraints): unknown =>
   (constraints.video as MediaTrackConstraints | undefined)?.displaySurface;
 
+const makeLifecycleDeps = (
+  getDisplayMedia: (c: MediaStreamConstraints) => Promise<MediaStream>,
+) => {
+  const stoppedBlob = new Blob(['x'], { type: 'video/mp4' });
+  const createdSession = { stop: vi.fn(async () => stoppedBlob) };
+  const createRecordingSession = vi.fn(() => createdSession);
+  const download = vi.fn(async () => ({}));
+  const setStatus = vi.fn<(t: string) => void>();
+  const onStateChange = vi.fn<(s: string) => void>();
+  return {
+    deps: { getDisplayMedia, createRecordingSession, download, setStatus, onStateChange },
+    createdSession,
+    createRecordingSession,
+    download,
+    setStatus,
+    onStateChange,
+  };
+};
+
 // ---------------------------------------------------------------------------
-// (a) recordPageModeFromSearch -- PURE/total parse
+// (a) recordPageModeFromSearch — PURE/total parse (unchanged discriminant)
 // ---------------------------------------------------------------------------
 
-describe('recordPageModeFromSearch -- pure mode parse (RC-B)', () => {
+describe('recordPageModeFromSearch — pure mode parse', () => {
   it('parses ?mode=window-cropped to "window-cropped"', () => {
     expect(recordPageModeFromSearch('?mode=window-cropped')).toBe('window-cropped');
   });
 
   it('treats an empty search, a missing mode, and an unknown mode all as "default"', () => {
-    // Total over the input domain: anything that is not exactly the
-    // window-cropped flag falls back to the unchanged tab path.
     expect(recordPageModeFromSearch('')).toBe('default');
     expect(recordPageModeFromSearch('?')).toBe('default');
     expect(recordPageModeFromSearch('?foo=bar')).toBe('default');
@@ -68,61 +105,91 @@ describe('recordPageModeFromSearch -- pure mode parse (RC-B)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// (b) window-cropped routing -- the dead code is now live
+// (b) displayMediaConstraintsForMode — PURE surface choice (the simplification)
 // ---------------------------------------------------------------------------
 
-describe('createRecordPageAction -- window-cropped routing invokes startWindowCroppedRecording (RC-B)', () => {
-  it('under window-cropped mode, an action invokes startWindowCroppedRecording (getDisplayMedia displaySurface:"window"), NOT the tab path', async () => {
-    // Inject a fake getDisplayMedia that resolves an audio-bearing window stream
-    // (the audio-success path, single call), and a tab-path spy that MUST NOT run.
-    const getDisplayMedia = vi
-      .fn<(c: MediaStreamConstraints) => Promise<MediaStream>>()
-      .mockResolvedValueOnce(makeFakeStream());
-    const createdSession = { stop: vi.fn(async () => new Blob()) };
-    const createRecordingSession = vi.fn(() => createdSession);
-    const startTabRecording = vi.fn(async () => {});
-    const onStateChange = vi.fn<(s: string) => void>();
-
-    const action = createRecordPageAction('window-cropped', {
-      getDisplayMedia,
-      createRecordingSession,
-      download: vi.fn(),
-      setStatus: vi.fn(),
-      onStateChange,
-      startTabRecording,
-    });
-
-    await action();
-
-    // The window path ran: getDisplayMedia requested the WINDOW surface...
-    expect(getDisplayMedia).toHaveBeenCalledTimes(1);
-    expect(displaySurfaceOf(getDisplayMedia.mock.calls[0]![0]!)).toBe('window');
-    // ...a recorder session was created and the page is recording...
-    expect(createRecordingSession).toHaveBeenCalledTimes(1);
-    expect(onStateChange).toHaveBeenLastCalledWith('recording');
-    // ...and the tab path was NEVER taken (the dead-code bug is fixed).
-    expect(startTabRecording).not.toHaveBeenCalled();
+describe('displayMediaConstraintsForMode — pure surface choice', () => {
+  it('requests displaySurface:"window" for window mode and "browser" for default mode', () => {
+    expect(displaySurfaceOf(displayMediaConstraintsForMode('window-cropped'))).toBe('window');
+    expect(displaySurfaceOf(displayMediaConstraintsForMode('default'))).toBe('browser');
   });
 
-  it('under default mode (no/other mode param), an action invokes the tab path and NEVER getDisplayMedia(window)', async () => {
-    // The single-tab / Firefox path: the action must run the unchanged tab
-    // recorder and never touch the window-cropped getDisplayMedia seam.
-    const getDisplayMedia = vi.fn<(c: MediaStreamConstraints) => Promise<MediaStream>>();
-    const startTabRecording = vi.fn(async () => {});
+  it('requests audio on the first attempt for both modes (no-audio retry derives from this)', () => {
+    const modes: RecordPageMode[] = ['window-cropped', 'default'];
+    for (const mode of modes) {
+      expect(displayMediaConstraintsForMode(mode).audio).toBe(true);
+    }
+  });
+});
 
-    const action = createRecordPageAction('default', {
-      getDisplayMedia,
-      createRecordingSession: vi.fn(),
-      download: vi.fn(),
-      setStatus: vi.fn(),
-      onStateChange: vi.fn(),
-      startTabRecording,
-    });
+// ---------------------------------------------------------------------------
+// (c) Shared start→stop→download lifecycle — the unwired-Stop bug is gone
+// ---------------------------------------------------------------------------
 
-    await action();
+describe('createRecordLifecycle — window mode records the whole window via the proven path', () => {
+  it('window mode: start requests displaySurface:"window", then the SAME stop fires the session stop + download', async () => {
+    const getDisplayMedia = vi
+      .fn<(c: MediaStreamConstraints) => Promise<MediaStream>>()
+      .mockResolvedValueOnce(makeFakeStream({ audio: true }));
+    const h = makeLifecycleDeps(getDisplayMedia);
 
-    // The tab path ran exactly once; the window-cropped seam was never reached.
-    expect(startTabRecording).toHaveBeenCalledTimes(1);
-    expect(getDisplayMedia).not.toHaveBeenCalled();
+    const lifecycle = createRecordLifecycle('window-cropped', h.deps);
+    await lifecycle.start();
+
+    // Window surface requested; a recorder session created; page is recording.
+    expect(getDisplayMedia).toHaveBeenCalledTimes(1);
+    expect(displaySurfaceOf(getDisplayMedia.mock.calls[0]![0]!)).toBe('window');
+    expect(h.createRecordingSession).toHaveBeenCalledTimes(1);
+    expect(h.onStateChange).toHaveBeenCalledWith('recording');
+
+    // The SAME stop path drives the captured session's stop AND the download —
+    // the window session is NOT discarded and Stop is NOT hardwired to the tab
+    // path. This is the reuse that fixes the unwired-Stop bug.
+    await lifecycle.stop();
+    expect(h.createdSession.stop).toHaveBeenCalledTimes(1);
+    expect(h.download).toHaveBeenCalledTimes(1);
+  });
+
+  it('default mode: start requests displaySurface:"browser", then the SAME stop fires the session stop + download', async () => {
+    const getDisplayMedia = vi
+      .fn<(c: MediaStreamConstraints) => Promise<MediaStream>>()
+      .mockResolvedValueOnce(makeFakeStream({ audio: true }));
+    const h = makeLifecycleDeps(getDisplayMedia);
+
+    const lifecycle = createRecordLifecycle('default', h.deps);
+    await lifecycle.start();
+
+    expect(getDisplayMedia).toHaveBeenCalledTimes(1);
+    expect(displaySurfaceOf(getDisplayMedia.mock.calls[0]![0]!)).toBe('browser');
+
+    await lifecycle.stop();
+    expect(h.createdSession.stop).toHaveBeenCalledTimes(1);
+    expect(h.download).toHaveBeenCalledTimes(1);
+  });
+
+  it('window mode keeps the no-audio retry: when audio:true rejects, the SAME window surface is retried with audio:false before any cancel notice', async () => {
+    const getDisplayMedia = vi
+      .fn<(c: MediaStreamConstraints) => Promise<MediaStream>>()
+      .mockRejectedValueOnce(
+        Object.assign(new Error('surface cannot supply audio'), { name: 'NotSupportedError' }),
+      )
+      .mockResolvedValueOnce(makeFakeStream({ audio: false }));
+    const h = makeLifecycleDeps(getDisplayMedia);
+
+    const lifecycle = createRecordLifecycle('window-cropped', h.deps);
+    await lifecycle.start();
+
+    // Two attempts: audio:true window first, then audio:false SAME window surface.
+    expect(getDisplayMedia).toHaveBeenCalledTimes(2);
+    const first = getDisplayMedia.mock.calls[0]![0]!;
+    const second = getDisplayMedia.mock.calls[1]![0]!;
+    expect(first.audio).toBe(true);
+    expect(displaySurfaceOf(first)).toBe('window');
+    expect(second.audio).toBe(false);
+    expect(displaySurfaceOf(second)).toBe('window');
+
+    // Degraded to no-audio but still recording — no cancel notice, recorder built.
+    expect(h.createRecordingSession).toHaveBeenCalledTimes(1);
+    expect(h.onStateChange).toHaveBeenCalledWith('recording');
   });
 });

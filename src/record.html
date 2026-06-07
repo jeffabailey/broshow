@@ -15,10 +15,10 @@
       .audio-options .hint { margin: 8px 0 0 24px; }
       a { color: #0060df; }
       /* Honest "Recording window region" scope banner (US-1 AC1.3 / US-3 AC3.1).
-         The cropped-window stream hides chrome but follows tab switches within the
-         shared window; this always-visible signal tells Dana the active window's
-         region is what's being captured. record.ts shows it for the whole session
-         (one stream, one indicator -- never stale, no tabs.onActivated). */
+         The whole-window stream includes browser chrome and follows tab switches
+         within the shared window; this always-visible signal tells the operator
+         the active window's region is what's being captured. record.ts shows it
+         for the whole session (one stream, one indicator -- never stale). */
       #recording-region-indicator {
         margin: 12px 0; padding: 10px 12px; border-radius: 6px;
         background: #fde7e7; border: 1px solid #f5b5b5; color: #8a1f1f;
@@ -29,26 +29,6 @@
         content: ''; width: 10px; height: 10px; border-radius: 50%;
         background: #D32F2F; display: inline-block;
       }
-      /* Live preview sink (window-cropped mode). Hidden until a stream is set;
-         the user drags a crop box over it. The compositor canvas is offscreen. */
-      #crop-stage { display: none; position: relative; margin: 12px 0; max-width: 100%; }
-      #crop-preview { display: block; max-width: 100%; background: #000; }
-      #crop-canvas { display: none; }
-      /* Drag surface over the live preview. The marquee box is positioned from
-         CSS custom properties written by createCropSelection (preview CSS px);
-         record.ts holds the geometry-free pointer capture, crop-geometry maps it
-         to stream space. No chrome-height estimation -- WYSIWYG (ADR-011). */
-      #crop-overlay {
-        position: absolute; inset: 0; cursor: crosshair; touch-action: none;
-      }
-      #crop-overlay::after {
-        content: ''; position: absolute;
-        left: var(--crop-x, 0); top: var(--crop-y, 0);
-        width: var(--crop-w, 0); height: var(--crop-h, 0);
-        border: 2px solid #0060df; background: rgba(0, 96, 223, 0.15);
-        pointer-events: none;
-      }
-      #crop-confirm { display: none; margin: 8px 0; }
     </style>
   </head>
   <body>
@@ -56,9 +36,9 @@
 
     <!-- Honest "Recording window region" scope indicator (US-1 AC1.3 / US-3
          AC3.1). Hidden by default; record.ts reveals it while this surface hosts
-         the window-region capture so Dana always sees the scope being recorded.
-         It follows tab switches within the shared window without going stale --
-         one window stream, one indicator, no tabs.onActivated. -->
+         the window-region capture so the operator always sees the scope being
+         recorded. It follows tab switches within the shared window without going
+         stale -- one window stream, one indicator. -->
     <p id="recording-region-indicator" hidden>Recording window region</p>
 
     <!-- Firefox-only: the mic / virtual-audio-device (BlackHole) workaround for
@@ -88,19 +68,6 @@
 
     <button id="action-button">Pick &amp; Start Recording</button>
     <p id="status">Ready</p>
-
-    <!-- Window-cropped mode: live preview of the granted window stream (the
-         crop-box drag surface) and the offscreen compositor canvas. Both are
-         hidden in single-tab/Firefox modes; the compositor draws the cropped
-         sub-rect of the preview video onto the canvas, whose captureStream feeds
-         the unchanged recorder. The overlay is the pointer drag-capture surface;
-         the user drags a crop box over the live preview, then confirms. -->
-    <div id="crop-stage">
-      <video id="crop-preview" autoplay muted playsinline></video>
-      <div id="crop-overlay"></div>
-    </div>
-    <button id="crop-confirm">Confirm crop &amp; record</button>
-    <canvas id="crop-canvas"></canvas>
 
     <p class="hint">
       Keep this page open while recording. Click Stop when done.

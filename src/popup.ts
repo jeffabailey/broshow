@@ -158,11 +158,12 @@ const setupWindowCroppedRouting = (buttonEl: HTMLButtonElement): void => {
       // badge). No streamId, no CropRect on the wire (data-models.md §5).
       void sendMessage({ type: 'start-recording', path: 'window-cropped' });
 
-      // Open the record page (gesture + preview owner) WITH the window-cropped
-      // mode flag so bootstrapRecordPage routes the action to the window-capture
-      // path (startWindowCroppedRecording), not the single-tab path (RC-B). The
-      // popup origin never calls getDisplayMedia -- the record page does, in its
-      // own gesture. Single-tab/Firefox open record.html with NO flag (unchanged).
+      // Open the record page (the gesture owner) WITH the window mode flag so
+      // bootstrapRecordPage runs the shared record/stop/download lifecycle with
+      // the whole-window surface (displaySurface:'window'), not the single-tab
+      // surface. The popup origin never calls getDisplayMedia -- the record page
+      // does, in its own gesture. Single-tab/Firefox open record.html with NO
+      // flag (unchanged).
       void launchRecordPageWindow(status, 'record.html?mode=window-cropped');
     },
     { capture: true },
