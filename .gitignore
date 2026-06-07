@@ -10,3 +10,4 @@ tests/downloads-*/
 docs/feature/*/deliver/.develop-progress.json
 reports/mutation/
 .stryker-tmp/
+.dual-graph/
