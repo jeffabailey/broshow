@@ -19,6 +19,7 @@ import {
   detectRecordingCapability,
   initializePopup,
   modeToPath,
+  recordWindowBounds,
   type CapabilityCheckResult,
   type ProbeGlobals,
 } from './popup-logic';
@@ -68,8 +69,15 @@ const launchRecordPageWindow = (
     .create({
       url: chrome.runtime.getURL(recordPagePath),
       type: 'popup',
-      width: 520,
-      height: 280,
+      // Size the recorder window generously from the screen and center it. The
+      // getDisplayMedia picker is centered on THIS window; the old short 520x280
+      // left no room for the window-selection grid, so Share stayed greyed. A
+      // tall, centered window gives the picker space to show selectable windows.
+      ...recordWindowBounds(
+        typeof window !== 'undefined' && window.screen
+          ? { availWidth: window.screen.availWidth, availHeight: window.screen.availHeight }
+          : { availWidth: 1280, availHeight: 800 },
+      ),
     })
     .then(() => {
       // Closing the toolbar popup gives the new window full focus.

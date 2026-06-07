@@ -92,6 +92,42 @@ export const detectRecordingCapability = (
   };
 };
 
+// --- Recorder window sizing ------------------------------------------------
+
+/** Available screen metrics the recorder window is sized against. */
+export interface ScreenSize {
+  readonly availWidth: number;
+  readonly availHeight: number;
+}
+
+/** chrome.windows.create bounds for the recorder window. */
+export interface WindowBounds {
+  readonly width: number;
+  readonly height: number;
+  readonly left: number;
+  readonly top: number;
+}
+
+const clampPositive = (value: number, fallback: number): number =>
+  Number.isFinite(value) && value > 0 ? value : fallback;
+
+/**
+ * Size the recorder window generously from the available screen and center it.
+ * The getDisplayMedia picker is centered on this window; a short window (the old
+ * fixed 520x280) cut off the window-selection grid, leaving Share greyed. PURE:
+ * ~70% width / ~85% height of the screen, bounded to a tall minimum and a
+ * sensible maximum, never larger than the screen, never off-screen.
+ */
+export const recordWindowBounds = (screen: ScreenSize): WindowBounds => {
+  const availWidth = clampPositive(screen.availWidth, 1280);
+  const availHeight = clampPositive(screen.availHeight, 800);
+  const width = Math.min(1000, Math.min(availWidth, Math.max(520, Math.round(availWidth * 0.7))));
+  const height = Math.min(900, Math.min(availHeight, Math.max(640, Math.round(availHeight * 0.85))));
+  const left = Math.max(0, Math.round((availWidth - width) / 2));
+  const top = Math.max(0, Math.round((availHeight - height) / 2));
+  return { width, height, left, top };
+};
+
 // --- Minimal element interfaces for testability ----------------------------
 
 interface ButtonElement {
