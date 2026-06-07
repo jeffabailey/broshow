@@ -61,7 +61,10 @@
          one window stream, one indicator, no tabs.onActivated. -->
     <p id="recording-region-indicator" hidden>Recording window region</p>
 
-    <div class="audio-options">
+    <!-- Firefox-only: the mic / virtual-audio-device (BlackHole) workaround for
+         Mozilla Bug 1541425. record.ts hides this whole block on Chromium, where
+         getDisplayMedia captures window/system audio directly. -->
+    <div class="audio-options" id="audio-options">
       <label>
         <input type="checkbox" id="capture-audio" />
         Include audio from microphone / virtual audio device

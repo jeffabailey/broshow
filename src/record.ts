@@ -22,6 +22,23 @@ import { formatRecordingFilename } from './background-logic';
 import { composeCroppedStream } from './crop-compositor';
 import { toCropRect, type DragRectPreviewPx } from './crop-geometry';
 import type { CropRect } from './types';
+import {
+  detectRecordingCapability,
+  type CapabilityCheckResult,
+  type ProbeGlobals,
+} from './popup-logic';
+
+/**
+ * Whether the record page should show the mic / virtual-audio-device
+ * ("BlackHole") audio options. They exist ONLY as a Firefox workaround:
+ * Firefox + macOS cannot capture tab/window audio directly (Mozilla Bug
+ * 1541425). On Chromium the window-cropped getDisplayMedia path captures
+ * window/system audio directly, so the block is irrelevant and is hidden.
+ * Pure predicate over the capability probe; unsupported defaults to hidden.
+ */
+export const shouldShowMicAudioOptions = (
+  capability: CapabilityCheckResult,
+): boolean => capability.supported && capability.path === 'firefox-display-media';
 
 type State = 'idle' | 'recording' | 'processing' | 'done';
 
@@ -442,6 +459,19 @@ const bootstrapRecordPage = (): void => {
   const indicatorEl = document.getElementById('recording-region-indicator');
   if (indicatorEl !== null) {
     renderRecordingRegionIndicator(indicatorEl, true);
+  }
+
+  // The mic / virtual-audio-device (BlackHole) options are a Firefox-only
+  // workaround (Mozilla Bug 1541425). On Chromium, where this page now also
+  // hosts the window-cropped mode, getDisplayMedia captures window/system
+  // audio directly, so hide the whole block. Absence of the element is
+  // tolerated so importing this module never hard-fails on an unexpected DOM.
+  const audioOptionsEl = document.getElementById('audio-options');
+  if (audioOptionsEl !== null) {
+    const capability = detectRecordingCapability(
+      globalThis as unknown as ProbeGlobals,
+    );
+    audioOptionsEl.hidden = !shouldShowMicAudioOptions(capability);
   }
 
   button.addEventListener('click', () => {
