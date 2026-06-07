@@ -74,9 +74,16 @@ Automated acceptance for capture behavior needs a Puppeteer/Playwright
 persistent-context (headed) harness or a human gate — Chrome 148's lockdowns are
 now a standing constraint. Budgeted note carried in `docs/architecture/atdd-infrastructure-policy.md`.
 
-## Follow-up (out of scope here)
+## Follow-up — investigated, likely a non-bug (corrected 2026-06-07)
 
-A **pre-existing production bug** was observed while testing: BroShow 0.2.18
-single-tab recording threw `Cannot read properties of undefined (reading 'track')`
-and produced no download in the headed-test environment. Logged for a separate
-`/nw:root-why` — not part of this feature.
+While testing, a `Cannot read properties of undefined (reading 'track')` error +
+no-download were observed and initially logged as a suspected production bug. A
+follow-up 5-Whys RCA (`docs/analysis/root-cause-analysis-track-undefined-no-download.md`)
+concluded this is **not BroShow's code** (high confidence): `grep -rn "\.track" src/`
+returns nothing, every track access is guarded/optional-chained, and the
+`(index):19529` minified location maps to the **recorded page's own third-party
+script**, not BroShow's (unminified) bundles. The `download.webm`-vs-`broshow-*`
+naming was a headed-Chrome CDP test-harness artifact (baseline-identical via
+`git stash`). Verdict: H2 (environment/misattribution), H1 (real bug)
+unsupported. A 5-minute clean-page manual repro (RCA §8) remains available to
+fully settle it.
