@@ -1,0 +1,42 @@
+{
+  "schema_version": "3.0",
+  "feature_id": "simplify-window-record-no-crop",
+  "events": [
+    {
+      "sid": "01-01",
+      "p": "PREPARE",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-06-07T16:28:09Z"
+    },
+    {
+      "sid": "01-01",
+      "p": "RED_ACCEPTANCE",
+      "s": "SKIPPED",
+      "d": "NOT_APPLICABLE: real window capture is human-gated; lifecycle verified headless via injected deps",
+      "t": "2026-06-07T16:28:16Z"
+    },
+    {
+      "sid": "01-01",
+      "p": "RED_UNIT",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-06-07T16:29:14Z"
+    },
+    {
+      "sid": "01-01",
+      "p": "GREEN",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-06-07T16:32:00Z"
+    },
+    {
+      "sid": "01-01",
+      "p": "COMMIT",
+      "s": "EXECUTED",
+      "d": "PASS",
+      "t": "2026-06-07T16:32:24Z"
+    }
+  ],
+  "project_id": "simplify-window-record-no-crop"
+}

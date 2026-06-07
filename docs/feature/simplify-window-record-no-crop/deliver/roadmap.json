@@ -1,0 +1,11 @@
+{
+  "roadmap": { "project_id": "simplify-window-record-no-crop", "created_at": "2026-06-07T00:00:00Z", "total_steps": 1, "phases": 1, "scope": "bugfix-simplify" },
+  "phases": [ { "id": "01", "name": "Record whole window, delete crop", "dependencies": [], "steps": [
+    { "id": "01-01", "name": "window mode records the whole window via the proven path; delete crop machinery",
+      "description": "Replace the bespoke crop lifecycle with the proven getDisplayMedia record/stop/download path using displaySurface:'window'. Delete crop-geometry, crop-compositor, crop-selection, startWindowCroppedRecording and the crop UI. Fixes start+stop+download by reuse.",
+      "criteria": "window mode start->stop->download works via the reused path; getDisplayMedia uses displaySurface:'window' for window mode and 'browser' for tab; crop modules deleted; build + full suite green.",
+      "estimated_time": "90min", "dependencies": [],
+      "files_to_modify": ["src/record.ts","src/record.html","src/popup.ts"], "test_file": "tests/unit/record-all-tabs-mode-routing.test.ts",
+      "scenario_name": "window mode records the whole window and stops+downloads via the reused getDisplayMedia path (no crop)" } ] } ],
+  "validation": { "status": "approved", "reviewed_by": "orchestrator (user-directed simplification)", "review_note": "User: record whole window, delete crop code. Supersedes the window-cropped crop machinery." }
+}
